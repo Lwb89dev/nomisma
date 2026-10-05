@@ -1,130 +1,129 @@
 # Nomisma
 
-Nomisma è un'app Android per dividere e sincronizzare le spese di un ledger condiviso. L'app è **local-first**: il ledger viene salvato sul dispositivo in SQLite e le operazioni possono essere pubblicate e ricevute tramite Nostr, con Amber come signer esterno.
+Nomisma is an Android app for splitting and synchronizing expenses in a shared ledger. It is **local-first**: the ledger is stored on the device in SQLite, while operations can be published and received over Nostr using Amber as an external signer.
 
-Versione applicativa attuale: `0.1.0`.
+Current application version: `0.1.0`.
 
-## Stato attuale
+## Current status
 
-Il progetto è un prototipo avanzato / beta interna. Il flusso locale è già utilizzabile; la sincronizzazione Nostr, il pairing e la diagnostica sono implementati e coperti da test unitari. Non sono ancora presenti una pipeline CI, una build firmata per la distribuzione o un relay incluso nel repository.
+The project is an advanced prototype / internal beta. The local workflow is usable; Nostr synchronization, pairing, and diagnostics are implemented and covered by unit tests. There is currently no CI pipeline, signed distribution build, or relay bundled with the repository.
 
-## Funzionalità disponibili
+## Available features
 
-- onboarding iniziale con spiegazione di privacy, Amber e pairing;
-- ledger locale con due partecipanti, valuta e capacità configurabili;
-- inserimento, modifica ed eliminazione logica delle spese;
-- importo, descrizione, esercente, note, data, categoria e tag;
-- categorie e tag condivisi, con rinomina, archiviazione e ripristino;
-- calcolo del saldo tra partecipanti e chiusura del ciclo;
-- metodi di settlement: bonifico, contanti, Lightning o altro;
-- storico delle spese e dei cicli chiusi;
-- analisi per periodo, partecipante, categoria e tag, con confronto tra periodi;
-- filtri salvabili, inclusi intervalli personalizzati e soglie di importo;
-- tre scene visuali selezionabili:
-  - `Vessel`: caraffa in vetro con liquido e animazioni di versamento;
-  - `Woodland`: diorama del bosco con animali e materiali associati;
-  - `Mempool`: ambiente minerario con carrello, miner e piccone;
-- qualità grafica automatica o manuale (`LOW`, `MEDIUM`, `HIGH`) e modalità movimento ridotto;
-- pairing tramite codice `nomisma1:` copiabile, condivisibile o importabile come deep link;
-- outbox locale per le operazioni non ancora pubblicate;
-- riconnessione del relay, recupero dello storico e stato di salute della sincronizzazione;
-- diagnostica copiabile senza includere spese o chiavi complete.
+- first-run onboarding covering privacy, Amber, and pairing;
+- local ledger with two participants, configurable currency, and capacity;
+- expense creation, editing, and soft deletion;
+- amount, description, merchant, notes, date, category, and tags;
+- shared categories and tags, with rename, archive, and restore actions;
+- balance calculation and settlement-cycle closure;
+- settlement methods: bank transfer, cash, Lightning, or other;
+- expense and closed-cycle history;
+- analytics by period, participant, category, and tag, including period comparisons;
+- saved filters with custom date ranges and amount thresholds;
+- three selectable visual scenes:
+  - `Vessel`: a glass pitcher with liquid and pouring animations;
+  - `Woodland`: a woodland diorama with animals and themed contribution materials;
+  - `Mempool`: a mining environment with a cart, miners, and pickaxe animations;
+- automatic or manual rendering quality (`LOW`, `MEDIUM`, `HIGH`) and reduced-motion mode;
+- pairing through a copyable, shareable, or deep-linkable `nomisma1:` code;
+- local outbox for operations that have not been published yet;
+- relay reconnection, history recovery, and synchronization health reporting;
+- copyable diagnostics that omit expenses and complete keys.
 
-## Sincronizzazione e sicurezza
+## Synchronization and security
 
-La chiave privata non viene salvata da Nomisma: la firma e le operazioni di cifratura passano attraverso Amber/NIP-55.
+Nomisma does not store the private key: signing and encryption requests are delegated to Amber/NIP-55.
 
-Il trasporto predefinito usa NIP-59 gift wrap con contenuto cifrato NIP-44 v2. Il percorso diretto NIP-44 è mantenuto per test controllati. Gli eventi in ingresso vengono validati, verificati, decrittati e poi consegnati al repository, che gestisce validazione del ledger, deduplicazione, sequenze, conflitti e operazioni differite.
+The default transport uses NIP-59 gift wrapping with NIP-44 v2 encrypted content. Direct NIP-44 is retained for controlled relay tests. Incoming events are structurally validated, verified, decrypted, and then passed to the repository, which owns ledger validation, deduplication, sequencing, conflict handling, and deferred operations.
 
-Per il relay sono accettati:
+Supported relay URLs are:
 
-- `wss://...` per relay con TLS;
-- `ws://192.168.1.10/...` per il relay LAN autorizzato dal progetto.
+- `wss://...` for TLS-enabled relays;
+- `ws://192.168.1.10/...` for the authorized LAN relay.
 
-Il traffico `ws://` in chiaro è disabilitato per gli altri host. Anche quando il relay è in chiaro, il contenuto delle operazioni resta cifrato a livello Nostr.
+Cleartext `ws://` traffic is disabled for other hosts. Even when the relay uses cleartext WebSockets, operation contents remain encrypted at the Nostr layer.
 
-Il codice di pairing contiene solo identificativo del ledger, relay, chiave pubblica e associazione dei partecipanti. Non contiene spese né chiavi private e include un checksum di integrità.
+A pairing code contains only the ledger identifier, relay URL, public key, and participant mapping. It contains no expenses or private keys and includes an integrity checksum.
 
-## Requisiti
+## Requirements
 
 - Android SDK `compileSdk 37`;
 - Android `minSdk 26`, `targetSdk 37`;
-- JDK compatibile con Android Gradle Plugin `9.4.1`;
-- Gradle wrapper incluso nel repository;
-- Amber installato sul dispositivo per verificare l'identità, firmare e cifrare;
-- un relay Nostr raggiungibile, `wss://` oppure il relay LAN previsto dalla configurazione.
+- a JDK compatible with Android Gradle Plugin `9.4.1`;
+- the Gradle wrapper included in the repository;
+- Amber installed on the device for identity verification, signing, and encryption;
+- a reachable Nostr relay using `wss://`, or the configured LAN relay.
 
-## Build e test
+## Build and test
 
-Dalla directory principale:
+From the project root:
 
 ```bash
 ./gradlew testDebugUnitTest
 ./gradlew assembleDebug
 ```
 
-L'APK debug viene prodotto in:
+The debug APK is generated at:
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Per installarlo su un dispositivo o emulatore con ADB:
+Install it on a connected device or emulator with ADB:
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Primo avvio
+## First launch
 
-Al primo avvio il database crea un ledger locale demo chiamato `Casa`, in EUR, con i partecipanti `Alice` e `Bob`. Il ledger non viene sostituito durante un pairing finché l'utente non importa un invito relativo a un altro ledger.
+On a new database, the app creates a local demo ledger named `Casa`, in EUR, with `Alice` and `Bob` as participants. The local ledger is not replaced during pairing until the user imports an invitation for another ledger.
 
-Per configurare la sincronizzazione:
+To configure synchronization:
 
-1. installare Amber e completare la verifica dell'identità nella schermata **Impostazioni**;
-2. configurare relay, chiave pubblica del destinatario e partecipanti locale/remoto;
-3. condividere il proprio codice pairing oppure importare quello dell'altro dispositivo;
-4. attendere che i controlli di pairing risultino completi;
-5. premere **Connetti** e, quando necessario, **Pubblica outbox**.
+1. install Amber and verify the identity from **Settings**;
+2. configure the relay, recipient public key, and local/remote participants;
+3. share your pairing code or import the code from the other device;
+4. wait until all pairing checks are complete;
+5. tap **Connect** and, when needed, **Publish outbox**.
 
-La riconnessione automatica può essere abilitata dalle impostazioni. La sessione Nostr resta attiva mentre si cambia schermata finché l'app rimane aperta.
+Automatic reconnection can be enabled in Settings. The Nostr session remains active while switching screens as long as the app stays open.
 
-## Struttura del progetto
+## Project structure
 
 ```text
 app/src/main/java/com/nomisma/app/
-├── data/       SQLite locale, outbox e filtri salvati
-├── domain/     modelli finanziari, policy, calcoli e operazioni
-├── nostr/      relay WebSocket, Amber, NIP-44/NIP-59 e pairing
-├── theme/      modelli e mapping delle scene visuali
-└── ui/         Compose, ViewModel, schermate e renderer Canvas
+├── data/       SQLite storage, outbox, and saved filters
+├── domain/     financial models, policies, calculations, and operations
+├── nostr/      WebSocket relay, Amber, NIP-44/NIP-59, and pairing
+├── theme/      visual-scene models and state mapping
+└── ui/         Compose UI, ViewModel, screens, and Canvas renderers
 ```
 
-I punti di ingresso principali sono:
+Main entry points:
 
-- `MainActivity`: bootstrap Compose e deep link `nomisma1:`;
-- `NomismaApp`: navigazione, onboarding, schermate e impostazioni;
-- `NomismaViewModel`: stato UI e coordinamento tra repository e sessione Nostr;
-- `LocalLedgerRepository`: autorità locale per dati, validazione e applicazione delle operazioni;
-- `NomismaThemeScene`: renderer delle scene `Vessel`, `Woodland` e `Mempool`.
+- `MainActivity`: Compose bootstrap and `nomisma1:` deep-link handling;
+- `NomismaApp`: navigation, onboarding, screens, and settings;
+- `NomismaViewModel`: UI state and coordination between the repository and Nostr session;
+- `LocalLedgerRepository`: local authority for data, validation, and operation application;
+- `NomismaThemeScene`: renderer for the `Vessel`, `Woodland`, and `Mempool` scenes.
 
-## Test presenti
+## Test coverage
 
-La suite copre principalmente:
+The current test suite primarily covers:
 
-- modelli finanziari, policy e calcolo delle operazioni;
-- serializzazione e validazione dei modelli Nostr;
-- cifratura NIP-44 v2;
-- pairing e checksum;
-- validazione delle risposte del signer;
-- policy di riconnessione del relay;
-- configurazione e diagnostica della sincronizzazione.
+- financial models, policies, and operation calculations;
+- Nostr model serialization and validation;
+- NIP-44 v2 encryption;
+- pairing and checksums;
+- signer response validation;
+- relay reconnection policy;
+- synchronization configuration and diagnostics.
 
-## Limiti noti
+## Known limitations
 
-- non è ancora disponibile un relay locale incluso nel progetto;
-- la distribuzione è al momento limitata a build debug / sviluppo;
-- non ci sono ancora test UI o screenshot test automatici;
-- la sincronizzazione dipende dalla disponibilità di Amber e dalla configurazione corretta del relay;
-- la licenza del progetto non è ancora definita in un file dedicato.
-
+- no local relay is bundled with the project;
+- distribution is currently limited to debug/development builds;
+- there are no UI or screenshot tests yet;
+- synchronization depends on Amber availability and correct relay configuration;
+- the project license has not yet been defined in a dedicated file.
