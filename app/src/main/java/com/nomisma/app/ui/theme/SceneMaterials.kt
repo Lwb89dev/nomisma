@@ -140,7 +140,7 @@ private const val LIQUID_SHADER = """
         float edgeLight = pow(abs(uv.x - 0.5) * 2.0, 5.0) * 0.26;
         float luminance = 0.57 + depth * 0.32 + caustic + (micro - 0.5) * 0.10 + edgeLight;
         half3 rgb = base.rgb * half(luminance) + half3(caustic * 0.34);
-        return half4(rgb, 0.96);
+        return half4(rgb, 0.72);
     }
 """
 

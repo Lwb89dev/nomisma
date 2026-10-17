@@ -1,0 +1,16 @@
+{
+  "id": "mempool",
+  "version": 1,
+  "background": "background.webp",
+  "cart": "cart.webp",
+  "minerLeft": "characters/miner_left.png",
+  "minerRight": "characters/miner_right.png",
+  "characters": ["characters/miner_left.png", "characters/miner_right.png"],
+  "layers": [
+    { "id": "background", "role": "environment", "required": true },
+    { "id": "miners", "role": "participant_identity", "required": true },
+    { "id": "cart", "role": "runtime_interactive", "file": "cart.webp", "required": true },
+    { "id": "ore", "role": "runtime_procedural", "required": true }
+  ],
+  "safeArea": { "left": 0.05, "top": 0.08, "right": 0.95, "bottom": 0.90 }
+}

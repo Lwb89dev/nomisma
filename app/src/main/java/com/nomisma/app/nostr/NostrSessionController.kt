@@ -63,6 +63,11 @@ data class NostrSessionState(
     val isConnected: Boolean get() = status == SyncConnectionStatus.CONNECTED
 }
 
+data class RemoteLedgerChange(
+    val result: InboundProcessingResult,
+    val isBacklogReconciliation: Boolean
+)
+
 /**
  * Application-scoped Nostr session. It deliberately lives outside Compose so
  * changing tab cannot close the relay or interrupt the inbound backlog.
@@ -75,8 +80,8 @@ class NostrSessionController(
     private val _state = MutableStateFlow(NostrSessionState())
     val state: StateFlow<NostrSessionState> = _state.asStateFlow()
 
-    private val _remoteChanges = MutableSharedFlow<InboundProcessingResult>(extraBufferCapacity = 32)
-    val remoteChanges: SharedFlow<InboundProcessingResult> = _remoteChanges.asSharedFlow()
+    private val _remoteChanges = MutableSharedFlow<RemoteLedgerChange>(extraBufferCapacity = 32)
+    val remoteChanges: SharedFlow<RemoteLedgerChange> = _remoteChanges.asSharedFlow()
 
     private var activeRelay: NostrRelayClient? = null
     private var sessionJob: Job? = null
@@ -265,9 +270,12 @@ class NostrSessionController(
                                 }
                                 if (backlogHasChanges) {
                                     _remoteChanges.emit(
-                                        InboundProcessingResult(
-                                            status = InboundProcessingStatus.APPLIED,
-                                            message = "Storico relay riconciliato"
+                                        RemoteLedgerChange(
+                                            result = InboundProcessingResult(
+                                                status = InboundProcessingStatus.APPLIED,
+                                                message = "Storico relay riconciliato"
+                                            ),
+                                            isBacklogReconciliation = true
                                         )
                                     )
                                     backlogHasChanges = false
@@ -330,7 +338,12 @@ class NostrSessionController(
             InboundProcessingStatus.APPLIED -> {
                 update { it.copy(message = result.message?.takeIf(String::isNotBlank) ?: "Operazione ricevuta e applicata") }
                 if (_state.value.backlogComplete) {
-                    _remoteChanges.emit(result)
+                    _remoteChanges.emit(
+                        RemoteLedgerChange(
+                            result = result,
+                            isBacklogReconciliation = false
+                        )
+                    )
                 } else {
                     backlogChanged = true
                 }

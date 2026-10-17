@@ -1,6 +1,5 @@
 package com.nomisma.app.theme
 
-import com.nomisma.app.domain.Expense
 import com.nomisma.app.domain.LedgerSnapshot
 
 data class ThemeDefinition(
@@ -58,7 +57,18 @@ object ParticipantColorPalette {
     }
 }
 
-data class ThemeFinancialState(
+data class ThemeContribution(
+    val id: String,
+    val participantId: String,
+    val amountMinor: Long,
+    val createdAtMillis: Long
+)
+
+/**
+ * Immutable, presentation-only projection consumed by the scene engine.
+ * Domain entities deliberately stop at the mapper boundary.
+ */
+data class ThemeSceneState(
     val ledgerId: String,
     val themeId: String,
     val cycleId: String?,
@@ -73,13 +83,20 @@ data class ThemeFinancialState(
     val overflowRatio: Float,
     val netBalanceMinor: Long,
     val creditorId: String?,
-    val latestContribution: Expense?
+    val latestContribution: ThemeContribution?
 )
+
+typealias ThemeFinancialState = ThemeSceneState
+
+enum class ThemeEventOrigin { LOCAL, REMOTE, RECONCILIATION }
 
 sealed interface ThemePresentationEvent {
     data class ContributionAdded(
-        val expense: Expense,
-        val isRemote: Boolean
+        val contribution: ThemeContribution,
+        val fromFill: Float,
+        val targetFill: Float,
+        val capacityReached: Boolean,
+        val capacityExceeded: Boolean
     ) : ThemePresentationEvent
 
     data class SettlementCompleted(val settlementId: String) : ThemePresentationEvent
@@ -100,7 +117,26 @@ sealed interface ThemePresentationEvent {
         val participantId: String,
         val name: String
     ) : ThemePresentationEvent
+
+    data class Reconciled(
+        val fromFill: Float,
+        val targetFill: Float,
+        val cycleVolumeMinor: Long
+    ) : ThemePresentationEvent
 }
+
+data class ThemeEventEnvelope(
+    val id: String,
+    val ledgerId: String,
+    val origin: ThemeEventOrigin,
+    val createdAtMillis: Long,
+    val event: ThemePresentationEvent
+)
+
+data class ThemeEventQueueState(
+    val pending: List<ThemeEventEnvelope> = emptyList(),
+    val lastConsumedEventId: String? = null
+)
 
 interface ThemeDefinitionProvider {
     fun definitions(): List<ThemeDefinition>
@@ -124,7 +160,7 @@ object ThemePresentationEventResolver {
     fun resolve(
         previous: ThemeFinancialState?,
         current: ThemeFinancialState,
-        isRemote: Boolean = false
+        @Suppress("UNUSED_PARAMETER") isRemote: Boolean = false
     ): List<ThemePresentationEvent> {
         if (previous == null || previous.ledgerId != current.ledgerId) return emptyList()
         return buildList {
@@ -136,14 +172,16 @@ object ThemePresentationEventResolver {
                 previous.cycleId?.let { add(ThemePresentationEvent.SettlementCompleted(it)) }
             } else if (cycleVolumeIncreased && current.latestContribution?.id != previous.latestContribution?.id) {
                 current.latestContribution?.let {
-                    add(ThemePresentationEvent.ContributionAdded(it, isRemote))
+                    add(
+                        ThemePresentationEvent.ContributionAdded(
+                            contribution = it,
+                            fromFill = previous.normalizedFill,
+                            targetFill = current.normalizedFill,
+                            capacityReached = previous.normalizedFill < 1f && current.normalizedFill >= 1f,
+                            capacityExceeded = previous.overflowRatio <= 0f && current.overflowRatio > 0f
+                        )
+                    )
                 }
-            }
-            if (cycleVolumeIncreased && previous.normalizedFill < 1f && current.normalizedFill >= 1f) {
-                add(ThemePresentationEvent.CapacityReached)
-            }
-            if (cycleVolumeIncreased && previous.overflowRatio <= 0f && current.overflowRatio > 0f) {
-                add(ThemePresentationEvent.CapacityExceeded)
             }
             if (previous.netBalanceMinor != current.netBalanceMinor || previous.creditorId != current.creditorId) {
                 add(ThemePresentationEvent.BalanceChanged(current.creditorId, current.netBalanceMinor))
@@ -188,7 +226,14 @@ object ThemeStateMapper {
             overflowRatio = snapshot.overflowRatio,
             netBalanceMinor = balance.amountMinor,
             creditorId = balance.creditorId,
-            latestContribution = snapshot.currentCycleExpenses.maxByOrNull { it.createdAtMillis }
+            latestContribution = snapshot.currentCycleExpenses.maxByOrNull { it.createdAtMillis }?.let {
+                ThemeContribution(
+                    id = it.id,
+                    participantId = it.authorId,
+                    amountMinor = it.amountMinor,
+                    createdAtMillis = it.createdAtMillis
+                )
+            }
         )
     }
 }

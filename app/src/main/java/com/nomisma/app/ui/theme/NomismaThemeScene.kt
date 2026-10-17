@@ -6,12 +6,8 @@ import android.content.Context
 import android.os.PowerManager
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -29,11 +25,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +42,8 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.PathMeasure
@@ -52,18 +53,25 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.nomisma.app.theme.ThemeFinancialState
+import com.nomisma.app.theme.ThemeEventEnvelope
 import com.nomisma.app.theme.ThemeIdentityRegistry
 import com.nomisma.app.theme.ThemePresentationEvent
-import com.nomisma.app.theme.ThemePresentationEventResolver
 import com.nomisma.app.theme.ThemeRegistry
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -74,6 +82,16 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 enum class ThemeRenderQuality { LOW, MEDIUM, HIGH }
+
+enum class MinerAppearance {
+    MAN,
+    WOMAN;
+
+    companion object {
+        fun fromStorage(value: String?): MinerAppearance =
+            entries.firstOrNull { it.name == value } ?: MAN
+    }
+}
 
 enum class ThemeQualityPreference {
     AUTO,
@@ -103,7 +121,12 @@ private data class SceneMotion(
     val settlement: Float,
     val reducedMotion: Boolean,
     val quality: ThemeRenderQuality,
-    val materials: SceneMaterials?
+    val materials: SceneMaterials?,
+    val assets: ThemeAssetPack?,
+    val eventSeed: Int,
+    val contributingParticipantId: String?,
+    val participantAMiner: MinerAppearance,
+    val participantBMiner: MinerAppearance
 )
 
 private interface VisualThemeRenderer {
@@ -141,9 +164,24 @@ fun NomismaThemeScene(
     themeId: String,
     qualityPreference: ThemeQualityPreference = ThemeQualityPreference.AUTO,
     motionPreference: ThemeMotionPreference = ThemeMotionPreference.SYSTEM,
+    minerAppearances: Map<String, MinerAppearance> = emptyMap(),
+    events: List<ThemeEventEnvelope> = emptyList(),
+    onEventConsumed: (String) -> Unit = {},
+    onStaleEvents: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var lifecycleActive by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, _ ->
+            lifecycleActive = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val quality = remember(context, qualityPreference) { resolveQuality(context, qualityPreference) }
     val reducedMotion = remember(motionPreference) {
         motionPreference == ThemeMotionPreference.REDUCED || !ValueAnimator.areAnimatorsEnabled()
@@ -151,6 +189,7 @@ fun NomismaThemeScene(
     val sceneMaterials = remember(quality) {
         if (quality == ThemeRenderQuality.LOW) null else SceneMaterialsFactory.create()
     }
+    val sceneAssets = rememberThemeAssetPack(context, themeId, quality)
     val animatedFill by animateFloatAsState(
         targetValue = state.normalizedFill.coerceIn(0f, 1f),
         animationSpec = tween(
@@ -161,16 +200,28 @@ fun NomismaThemeScene(
     )
     val contribution = remember { Animatable(0f) }
     val settlement = remember { Animatable(0f) }
-    var previousState by remember(state.ledgerId) { mutableStateOf<ThemeFinancialState?>(state) }
+    val activeEvent = events.firstOrNull { it.ledgerId == state.ledgerId }
 
-    LaunchedEffect(state) {
-        val events = ThemePresentationEventResolver.resolve(previousState, state)
-        previousState = state
-        if (!reducedMotion) {
-            if (events.any { it is ThemePresentationEvent.ContributionAdded }) {
-                launch {
-                    contribution.snapTo(0f)
-                    contribution.animateTo(
+    LaunchedEffect(activeEvent?.id, reducedMotion, lifecycleActive) {
+        if (!lifecycleActive) return@LaunchedEffect
+        val envelope = activeEvent ?: return@LaunchedEffect
+        val isStale = System.currentTimeMillis() - envelope.createdAtMillis >= 1_000L
+        val requiresActionPlayback = envelope.event is ThemePresentationEvent.ContributionAdded ||
+            envelope.event is ThemePresentationEvent.SettlementCompleted ||
+            envelope.event is ThemePresentationEvent.ThemeChanged
+        if (isStale && requiresActionPlayback) {
+            onStaleEvents()
+            return@LaunchedEffect
+        }
+        if (reducedMotion) {
+            delay(120)
+            onEventConsumed(envelope.id)
+            return@LaunchedEffect
+        }
+        when (envelope.event) {
+            is ThemePresentationEvent.ContributionAdded -> {
+                contribution.snapTo(0f)
+                contribution.animateTo(
                         1f,
                         keyframes {
                             durationMillis = 1_650
@@ -180,13 +231,10 @@ fun NomismaThemeScene(
                             0.88f at 1_080
                         }
                     )
-                    contribution.snapTo(0f)
-                }
             }
-            if (events.any { it is ThemePresentationEvent.SettlementCompleted }) {
-                launch {
-                    settlement.snapTo(0f)
-                    settlement.animateTo(
+            is ThemePresentationEvent.SettlementCompleted -> {
+                settlement.snapTo(0f)
+                settlement.animateTo(
                         1f,
                         keyframes {
                             durationMillis = 2_250
@@ -196,26 +244,43 @@ fun NomismaThemeScene(
                             0.82f at 1_480
                         }
                     )
-                    settlement.snapTo(0f)
-                }
             }
+            is ThemePresentationEvent.Reconciled,
+            is ThemePresentationEvent.ThemeChanged -> {
+                // State/fill cross-fades through animateFloatAsState; historical
+                // contribution props must never replay during reconciliation.
+                delay(420)
+            }
+            else -> delay(80)
         }
+        onEventConsumed(envelope.id)
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "scene-ambient")
-    val ambientPhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(16_000, easing = LinearEasing)),
-        label = "scene-ambient-phase"
-    )
+    val frameTimeNanos = remember { mutableLongStateOf(System.nanoTime()) }
+    LaunchedEffect(reducedMotion, lifecycleActive) {
+        if (reducedMotion || !lifecycleActive) return@LaunchedEffect
+        while (isActive) {
+            withFrameNanos { frameTimeNanos.longValue = it }
+        }
+    }
+    val activeContribution = activeEvent?.event as? ThemePresentationEvent.ContributionAdded
+    val activeSettlement = activeEvent?.event as? ThemePresentationEvent.SettlementCompleted
+    val contributionFillProgress = smoothStep(0.32f, 0.92f, contribution.value)
+    val displayFill = activeContribution?.let { event ->
+        event.fromFill + (event.targetFill - event.fromFill) * contributionFillProgress
+    } ?: animatedFill
     val motion = SceneMotion(
-        ambient = if (reducedMotion) 0.25f else ambientPhase,
-        contribution = contribution.value,
-        settlement = settlement.value,
+        ambient = 0.25f,
+        contribution = if (activeContribution != null) contribution.value else 0f,
+        settlement = if (activeSettlement != null) settlement.value else 0f,
         reducedMotion = reducedMotion,
         quality = quality,
-        materials = sceneMaterials
+        materials = sceneMaterials,
+        assets = sceneAssets,
+        eventSeed = activeEvent?.id?.hashCode() ?: 0,
+        contributingParticipantId = activeContribution?.contribution?.participantId,
+        participantAMiner = state.participantA?.id?.let(minerAppearances::get) ?: MinerAppearance.MAN,
+        participantBMiner = state.participantB?.id?.let(minerAppearances::get) ?: MinerAppearance.WOMAN
     )
     val sceneShape = RoundedCornerShape(32.dp)
 
@@ -230,14 +295,24 @@ fun NomismaThemeScene(
                     append("Visualizzazione ")
                     append(ThemeRegistry.definitions().firstOrNull { it.id == themeId }?.displayName ?: "Vessel")
                     append(", ciclo al ")
-                    append((animatedFill * 100).roundToInt())
+                    append((displayFill * 100).roundToInt())
                     append(" per cento")
                     if (state.overflowRatio > 0f) append(", soglia superata")
                 }
             }
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            (VisualThemeRenderers[themeId] ?: VesselThemeRenderer).render(this, state, animatedFill, motion)
+            val ambientPhase = if (reducedMotion) {
+                0.25f
+            } else {
+                ((frameTimeNanos.longValue / 1_000_000L) % 16_000L) / 16_000f
+            }
+            (VisualThemeRenderers[themeId] ?: VesselThemeRenderer).render(
+                this,
+                state,
+                displayFill,
+                motion.copy(ambient = ambientPhase)
+            )
         }
 
         Row(
@@ -266,7 +341,7 @@ fun NomismaThemeScene(
                     text = if (state.overflowRatio > 0f) {
                         "OLTRE SOGLIA +${(state.overflowRatio * 100).roundToInt()}%"
                     } else {
-                        "${(animatedFill * 100).roundToInt()}%"
+                        "${(displayFill * 100).roundToInt()}%"
                     },
                     color = if (state.overflowRatio > 0f) Color(0xFFFFC0AA) else Color.White.copy(alpha = 0.86f),
                     style = MaterialTheme.typography.labelSmall,
@@ -317,6 +392,44 @@ private fun resolveQuality(context: Context, preference: ThemeQualityPreference)
     }
 }
 
+private fun DrawScope.drawAssetCover(image: ImageBitmap, alpha: Float = 1f) {
+    val imageRatio = image.width.toFloat() / image.height.toFloat()
+    val targetRatio = size.width / size.height
+    val source = if (imageRatio > targetRatio) {
+        val sourceWidth = (image.height * targetRatio).roundToInt().coerceAtLeast(1)
+        IntOffset((image.width - sourceWidth) / 2, 0) to IntSize(sourceWidth, image.height)
+    } else {
+        val sourceHeight = (image.width / targetRatio).roundToInt().coerceAtLeast(1)
+        IntOffset(0, (image.height - sourceHeight) / 2) to IntSize(image.width, sourceHeight)
+    }
+    drawImage(
+        image = image,
+        srcOffset = source.first,
+        srcSize = source.second,
+        dstOffset = IntOffset.Zero,
+        dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
+        alpha = alpha,
+        filterQuality = FilterQuality.High
+    )
+}
+
+private fun DrawScope.drawAssetInRect(
+    image: ImageBitmap,
+    left: Float,
+    top: Float,
+    width: Float,
+    height: Float,
+    alpha: Float = 1f
+) {
+    drawImage(
+        image = image,
+        dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+        dstSize = IntSize(width.roundToInt().coerceAtLeast(1), height.roundToInt().coerceAtLeast(1)),
+        alpha = alpha,
+        filterQuality = FilterQuality.High
+    )
+}
+
 private fun DrawScope.drawVesselScene(
     state: ThemeFinancialState,
     fill: Float,
@@ -328,7 +441,11 @@ private fun DrawScope.drawVesselScene(
     val settlementGlow = sin(motion.settlement.coerceIn(0f, 1f) * PI).toFloat().coerceAtLeast(0f)
     val impactWave = dampedWave(motion.contribution, start = 0.40f, oscillations = 4.5f, damping = 3.2f)
 
-    drawRect(Brush.verticalGradient(listOf(Color(0xFF121B2A), Color(0xFF070A12), Color(0xFF020307))))
+    motion.assets?.background?.let(::drawAssetCover)
+        ?: drawRect(Brush.verticalGradient(listOf(Color(0xFF121B2A), Color(0xFF070A12), Color(0xFF020307))))
+    if (motion.assets?.background != null) {
+        drawRect(Color(0xFF02050A).copy(alpha = 0.16f))
+    }
     drawStudioLightShafts(participantAColor, participantBColor, motion)
     drawCircle(
         Brush.radialGradient(listOf(participantAColor.copy(alpha = 0.30f), participantAColor.copy(alpha = 0.06f), Color.Transparent)),
@@ -342,12 +459,17 @@ private fun DrawScope.drawVesselScene(
     )
     drawVesselDust(motion)
 
-    val centerX = size.width * 0.47f
-    val top = size.height * 0.145f
-    val bottom = size.height * 0.87f
-    val bodyLeft = size.width * 0.24f
-    val bodyRight = size.width * 0.69f
+    // These measurements track the transparent glass asset rather than its
+    // full bitmap bounds (which also include the handle and empty padding).
+    val centerX = size.width * 0.405f
+    val top = size.height * 0.125f
+    val bottom = size.height * 0.875f
+    val bodyLeft = size.width * 0.145f
+    val bodyRight = size.width * 0.665f
     val vessel = vesselPath(centerX, top, bottom, bodyLeft, bodyRight)
+    val liquidBottom = bottom - 5.dp.toPx()
+    val liquidHeight = (bottom - top) * 0.84f * fill.coerceIn(0f, 1f)
+    val liquidTop = liquidBottom - liquidHeight
 
     drawOval(
         Brush.radialGradient(listOf(Color.Black.copy(alpha = 0.82f), Color.Transparent)),
@@ -355,7 +477,9 @@ private fun DrawScope.drawVesselScene(
         size = Size(size.width * 0.66f, size.height * 0.17f)
     )
 
-    drawPitcherHandle(bodyRight, top, bottom, participantBColor)
+    if (motion.assets?.pitcher == null) {
+        drawPitcherHandle(bodyRight, top, bottom, participantBColor)
+    }
 
     clipPath(vessel) {
         drawRect(
@@ -372,9 +496,6 @@ private fun DrawScope.drawVesselScene(
             size = Size(bodyRight - bodyLeft, bottom - top)
         )
         if (fill > 0f) {
-            val liquidBottom = bottom - 5.dp.toPx()
-            val liquidHeight = (bottom - top) * 0.84f * fill
-            val liquidTop = liquidBottom - liquidHeight
             val total = state.participantAContributionMinor + state.participantBContributionMinor
             val ratioA = if (total <= 0L) 0.5f else state.participantAContributionMinor.toFloat() / total.toFloat()
             val liquidBrush = motion.materials?.liquid(
@@ -412,26 +533,53 @@ private fun DrawScope.drawVesselScene(
         }
     }
 
-    drawPath(vessel, Color(0xFFBBD6E5).copy(alpha = 0.13f), style = Stroke(13.dp.toPx(), join = StrokeJoin.Round))
-    drawPath(
-        vessel,
-        Brush.horizontalGradient(
-            0f to Color.White.copy(alpha = 0.75f),
-            0.14f to participantAColor.copy(alpha = 0.34f),
-            0.46f to Color.White.copy(alpha = 0.055f),
-            0.78f to participantBColor.copy(alpha = 0.34f),
-            1f to Color.White.copy(alpha = 0.72f),
-            startX = bodyLeft,
-            endX = bodyRight
-        ),
-        style = Stroke(2.3.dp.toPx(), join = StrokeJoin.Round)
-    )
-    drawVesselHighlights(centerX, top, bottom, bodyLeft, bodyRight)
-    drawPitcherRim(centerX, top, bodyRight - bodyLeft, participantAColor, participantBColor)
-
     if (motion.contribution > 0f) {
-        drawLiquidContribution(state, motion.contribution, participantAColor, participantBColor, centerX, top)
+        drawLiquidContribution(
+            state = state,
+            progress = motion.contribution,
+            colorA = participantAColor,
+            colorB = participantBColor,
+            cavity = vessel,
+            centerX = centerX,
+            vesselTop = top,
+            vesselBottom = liquidBottom,
+            liquidSurfaceY = if (fill > 0.01f) liquidTop else liquidBottom,
+            cavityLeft = bodyLeft,
+            cavityRight = bodyRight,
+            quality = motion.quality,
+            contributingParticipantId = motion.contributingParticipantId,
+            eventSeed = motion.eventSeed
+        )
     }
+
+    val pitcher = motion.assets?.pitcher
+    if (pitcher != null) {
+        drawAssetInRect(
+            image = pitcher,
+            left = size.width * 0.01f,
+            top = size.height * 0.055f,
+            width = size.width * 0.91f,
+            height = size.height * 0.86f
+        )
+    } else {
+        drawPath(vessel, Color(0xFFBBD6E5).copy(alpha = 0.13f), style = Stroke(13.dp.toPx(), join = StrokeJoin.Round))
+        drawPath(
+            vessel,
+            Brush.horizontalGradient(
+                0f to Color.White.copy(alpha = 0.75f),
+                0.14f to participantAColor.copy(alpha = 0.34f),
+                0.46f to Color.White.copy(alpha = 0.055f),
+                0.78f to participantBColor.copy(alpha = 0.34f),
+                1f to Color.White.copy(alpha = 0.72f),
+                startX = bodyLeft,
+                endX = bodyRight
+            ),
+            style = Stroke(2.3.dp.toPx(), join = StrokeJoin.Round)
+        )
+        drawVesselHighlights(centerX, top, bottom, bodyLeft, bodyRight)
+        drawPitcherRim(centerX, top, bodyRight - bodyLeft, participantAColor, participantBColor)
+    }
+
     if (state.overflowRatio > 0f && motion.settlement == 0f) {
         drawVesselOverflow(state, motion, participantAColor, participantBColor, centerX, top)
     }
@@ -571,16 +719,16 @@ private fun conservedLiquidBrush(
     startX: Float,
     endX: Float
 ): Brush {
-    if (ratioA <= 0.001f) return Brush.horizontalGradient(listOf(colorB, colorB.copy(alpha = 0.78f)), startX, endX)
-    if (ratioA >= 0.999f) return Brush.horizontalGradient(listOf(colorA.copy(alpha = 0.78f), colorA), startX, endX)
+    if (ratioA <= 0.001f) return Brush.horizontalGradient(listOf(colorB.copy(alpha = 0.62f), colorB.copy(alpha = 0.74f)), startX, endX)
+    if (ratioA >= 0.999f) return Brush.horizontalGradient(listOf(colorA.copy(alpha = 0.62f), colorA.copy(alpha = 0.74f)), startX, endX)
     val boundary = ratioA.coerceIn(0.05f, 0.95f)
     val transition = 0.11f.coerceAtMost(boundary).coerceAtMost(1f - boundary)
     return Brush.horizontalGradient(
-        0f to colorA.copy(alpha = 0.92f),
-        (boundary - transition) to colorA.copy(alpha = 0.9f),
-        boundary to lerp(colorA, colorB, 0.5f).copy(alpha = 0.9f),
-        (boundary + transition) to colorB.copy(alpha = 0.9f),
-        1f to colorB.copy(alpha = 0.92f),
+        0f to colorA.copy(alpha = 0.66f),
+        (boundary - transition) to colorA.copy(alpha = 0.72f),
+        boundary to lerp(colorA, colorB, 0.5f).copy(alpha = 0.70f),
+        (boundary + transition) to colorB.copy(alpha = 0.72f),
+        1f to colorB.copy(alpha = 0.66f),
         startX = startX,
         endX = endX
     )
@@ -734,104 +882,108 @@ private fun DrawScope.drawLiquidContribution(
     progress: Float,
     colorA: Color,
     colorB: Color,
+    cavity: Path,
     centerX: Float,
-    vesselTop: Float
+    vesselTop: Float,
+    vesselBottom: Float,
+    liquidSurfaceY: Float,
+    cavityLeft: Float,
+    cavityRight: Float,
+    quality: ThemeRenderQuality,
+    contributingParticipantId: String?,
+    eventSeed: Int
 ) {
-    val expense = state.latestContribution ?: return
-    val fromLeft = expense.authorId == state.participantA?.id
+    val participantId = contributingParticipantId ?: return
+    val fromLeft = participantId == state.participantA?.id
     val color = if (fromLeft) colorA else colorB
-    val direction = if (fromLeft) 1f else -1f
-    val origin = Offset(if (fromLeft) size.width * 0.055f else size.width * 0.945f, size.height * 0.34f)
-    val impact = Offset(centerX + direction * 7.dp.toPx(), vesselTop + 7.dp.toPx())
-    val stream = Path().apply {
-        moveTo(origin.x, origin.y)
-        cubicTo(
-            if (fromLeft) size.width * 0.22f else size.width * 0.78f,
-            size.height * 0.20f,
-            centerX - direction * size.width * 0.12f,
-            size.height * 0.19f,
-            impact.x,
-            impact.y
-        )
-    }
-    val measure = PathMeasure().apply { setPath(stream, false) }
-    val head = smoothStep(0.02f, 0.54f, progress)
-    val tail = smoothStep(0.58f, 0.88f, progress)
-    val startDistance = measure.length * tail * 0.96f
-    val endDistance = measure.length * head
+    val side = if (fromLeft) -1f else 1f
+    val streamX = centerX + side * (cavityRight - cavityLeft) * 0.075f
+    val originY = -size.height * 0.09f
+    val impact = Offset(streamX, liquidSurfaceY.coerceIn(vesselTop + 18.dp.toPx(), vesselBottom))
+    val head = smoothStep(0.01f, 0.34f, progress)
+    val tail = smoothStep(0.68f, 0.94f, progress)
     val streamFade = (1f - smoothStep(0.79f, 1f, progress)).coerceIn(0f, 1f)
-    if (endDistance > startDistance && streamFade > 0f) {
-        val segmentCount = 30
-        var previous = measure.getPosition(startDistance)
+    if (head > tail && streamFade > 0f) {
+        val segmentCount = if (quality == ThemeRenderQuality.HIGH) 34 else 24
+        fun streamPoint(t: Float): Offset {
+            val y = originY + (impact.y - originY) * t
+            val taper = sin(t * PI.toFloat()).coerceAtLeast(0f)
+            val wobble = sin(t * 22f + progress * 18f + eventSeed * 0.001f) * 1.35.dp.toPx() * taper
+            return Offset(streamX + wobble, y)
+        }
+        var previous = streamPoint(tail)
         repeat(segmentCount) { index ->
             val normalized = (index + 1) / segmentCount.toFloat()
-            val distance = startDistance + (endDistance - startDistance) * normalized
-            val current = measure.getPosition(distance)
+            val current = streamPoint(tail + (head - tail) * normalized)
             val body = sin(normalized * PI.toFloat()).coerceAtLeast(0f)
-            val breakup = 0.86f + sin(index * 1.71f + progress * 19f) * 0.14f
-            val width = (2.0f + body * 4.5f) * breakup * streamFade
-            drawLine(color.copy(alpha = 0.14f * streamFade), previous, current, (width + 6f).dp.toPx(), StrokeCap.Round)
-            drawLine(color.copy(alpha = 0.90f * streamFade), previous, current, width.dp.toPx(), StrokeCap.Round)
-            if (index % 3 == 0) {
-                val highlightEnd = Offset(
-                    previous.x + (current.x - previous.x) * 0.82f,
-                    previous.y + (current.y - previous.y) * 0.82f
-                )
-                drawLine(Color.White.copy(alpha = 0.28f * streamFade), previous, highlightEnd, (width * 0.23f).dp.toPx(), StrokeCap.Round)
-            }
+            val breakup = 0.91f + sin(index * 1.71f + progress * 19f) * 0.09f
+            val width = (3.0f + body * 3.2f) * breakup * streamFade
+            drawLine(color.copy(alpha = 0.10f * streamFade), previous, current, (width + 7f).dp.toPx(), StrokeCap.Round)
+            drawLine(color.copy(alpha = 0.78f * streamFade), previous, current, width.dp.toPx(), StrokeCap.Round)
+            drawLine(Color.White.copy(alpha = 0.26f * streamFade), previous + Offset(-width * 0.12f, 0f), current + Offset(-width * 0.12f, 0f), (width * 0.22f).dp.toPx(), StrokeCap.Round)
             previous = current
         }
     }
 
-    if (head > 0.18f && head < 0.98f) {
-        repeat(6) { index ->
-            val lag = (head - 0.055f - index * 0.052f).coerceIn(0f, 1f)
-            val position = measure.getPosition(measure.length * lag)
-            val wobble = sin(progress * 31f + index * 2.3f) * (1.2f + index * 0.25f).dp.toPx()
-            drawWaterDroplet(
-                center = position + Offset(-direction * wobble, wobble * 0.45f),
-                velocity = Offset(direction * 1.2f, 2.7f),
-                color = color,
-                radius = (2.8f - index * 0.25f).dp.toPx(),
-                alpha = streamFade * (0.82f - index * 0.07f)
-            )
+    if (progress > 0.29f) {
+        val splashTime = ((progress - 0.29f) / 0.60f).coerceIn(0f, 1f)
+        val splashFade = (1f - smoothStep(0.58f, 1f, splashTime)).coerceIn(0f, 1f)
+        val dropCount = when (quality) {
+            ThemeRenderQuality.LOW -> 14
+            ThemeRenderQuality.MEDIUM -> 23
+            ThemeRenderQuality.HIGH -> 34
         }
-    }
-
-    if (progress > 0.46f) {
-        val splashTime = ((progress - 0.46f) / 0.54f).coerceIn(0f, 1f)
-        val splashFade = (1f - splashTime).coerceIn(0f, 1f)
-        repeat(13) { index ->
-            val side = if (index % 2 == 0) -1f else 1f
-            val speedX = side * (14f + pseudo(index, 0.31f) * 28f).dp.toPx()
-            val speedY = (24f + pseudo(index, 0.82f) * 42f).dp.toPx()
-            val t = (splashTime * (0.82f + pseudo(index, 0.57f) * 0.34f)).coerceIn(0f, 1f)
-            val gravity = 88.dp.toPx()
-            val center = impact + Offset(speedX * t, -speedY * t + 0.5f * gravity * t * t)
-            val velocity = Offset(speedX, -speedY + gravity * t)
-            drawWaterDroplet(center, velocity, color, (1.35f + pseudo(index, 0.11f) * 2.1f).dp.toPx(), splashFade)
-        }
-        repeat(3) { ring ->
-            val ringProgress = (splashTime * 1.35f - ring * 0.18f).coerceIn(0f, 1f)
-            if (ringProgress > 0f) {
-                drawOval(
-                    color.copy(alpha = (1f - ringProgress) * 0.48f),
-                    impact - Offset((12 + ring * 4).dp.toPx() * ringProgress, 2.2.dp.toPx() * ringProgress),
-                    Size((24 + ring * 8).dp.toPx() * ringProgress, 4.4.dp.toPx() * ringProgress),
-                    style = Stroke((1.4f - ring * 0.2f).dp.toPx())
+        clipPath(cavity) {
+            repeat(dropCount) { index ->
+                val seededIndex = index xor eventSeed
+                val direction = if (index % 2 == 0) -1f else 1f
+                val speedX = direction * (18f + pseudo(seededIndex, 0.31f) * 73f).dp.toPx()
+                val speedY = (30f + pseudo(seededIndex, 0.82f) * 88f).dp.toPx()
+                val t = (splashTime * (0.73f + pseudo(seededIndex, 0.57f) * 0.44f)).coerceIn(0f, 1f)
+                val gravity = 132.dp.toPx()
+                val dropletCenter = impact + Offset(speedX * t, -speedY * t + 0.5f * gravity * t * t)
+                drawWaterDroplet(
+                    center = dropletCenter,
+                    velocity = Offset(speedX, -speedY + gravity * t),
+                    color = color,
+                    radius = (1.0f + pseudo(seededIndex, 0.11f) * 2.35f).dp.toPx(),
+                    alpha = splashFade * (0.54f + pseudo(seededIndex, 0.46f) * 0.42f)
                 )
             }
+            repeat(3) { ring ->
+                val ringProgress = (splashTime * 1.45f - ring * 0.17f).coerceIn(0f, 1f)
+                if (ringProgress > 0f) {
+                    val ringWidth = (24 + ring * 10).dp.toPx() * ringProgress
+                    val ringHeight = (4.5f + ring * 1.2f).dp.toPx() * ringProgress
+                    drawOval(
+                        color = color.copy(alpha = (1f - ringProgress) * 0.46f),
+                        topLeft = impact - Offset(ringWidth / 2f, ringHeight / 2f),
+                        size = Size(ringWidth, ringHeight),
+                        style = Stroke((1.4f - ring * 0.18f).dp.toPx())
+                    )
+                }
+            }
+            val wetEnvelope = sin(splashTime * PI.toFloat()).coerceAtLeast(0f)
+            repeat(if (quality == ThemeRenderQuality.HIGH) 10 else 6) { index ->
+                val onLeft = index % 2 == 0
+                val wallX = if (onLeft) cavityLeft else cavityRight
+                val inset = (5f + pseudo(index xor eventSeed, 0.28f) * 12f).dp.toPx()
+                val x = wallX + if (onLeft) inset else -inset
+                val startY = vesselTop + (34f + pseudo(index, 0.61f) * 96f).dp.toPx()
+                val length = (18f + pseudo(index, 0.76f) * 48f).dp.toPx() * wetEnvelope
+                val streak = Path().apply {
+                    moveTo(x, startY)
+                    cubicTo(
+                        x + (if (onLeft) 1f else -1f) * 5.dp.toPx(), startY + length * 0.30f,
+                        x - (if (onLeft) 1f else -1f) * 3.dp.toPx(), startY + length * 0.70f,
+                        x, startY + length
+                    )
+                }
+                drawPath(streak, color.copy(alpha = 0.23f * wetEnvelope), style = Stroke(2.1.dp.toPx(), cap = StrokeCap.Round))
+                drawPath(streak, Color.White.copy(alpha = 0.20f * wetEnvelope), style = Stroke(0.65.dp.toPx(), cap = StrokeCap.Round))
+                drawCircle(color.copy(alpha = 0.52f * wetEnvelope), (1.2f + pseudo(index, 0.19f) * 1.6f).dp.toPx(), Offset(x, startY + length))
+            }
         }
-    }
-    if (progress > 0.66f) {
-        val slide = ((progress - 0.66f) / 0.34f).coerceIn(0f, 1f)
-        val wallX = centerX + direction * size.width * 0.145f
-        val wallY = vesselTop + 42.dp.toPx() + slide * 52.dp.toPx()
-        drawOval(
-            Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.36f), color.copy(alpha = 0.72f)), wallY - 6.dp.toPx(), wallY + 8.dp.toPx()),
-            Offset(wallX - 3.2.dp.toPx(), wallY - 6.dp.toPx()),
-            Size(6.4.dp.toPx(), 14.dp.toPx() + slide * 5.dp.toPx())
-        )
     }
 }
 
@@ -904,47 +1056,69 @@ private fun DrawScope.drawWoodlandScene(
     val contributionReaction = sin(motion.contribution.coerceIn(0f, 1f) * PI).toFloat().coerceAtLeast(0f)
     val settlementFlash = sin(motion.settlement.coerceIn(0f, 1f) * PI).toFloat().coerceAtLeast(0f)
 
-    val backdrop = motion.materials?.woodland(size.width, size.height, motion.ambient, colorA, colorB)
-        ?: Brush.verticalGradient(listOf(Color(0xFF1A3022), Color(0xFF0B1710), Color(0xFF050906)))
-    drawRect(backdrop)
+    val woodlandBackground = motion.assets?.background
+    if (woodlandBackground != null) {
+        drawAssetCover(woodlandBackground)
+        drawRect(Color(0xFF061109).copy(alpha = 0.13f))
+    } else {
+        val backdrop = motion.materials?.woodland(size.width, size.height, motion.ambient, colorA, colorB)
+            ?: Brush.verticalGradient(listOf(Color(0xFF1A3022), Color(0xFF0B1710), Color(0xFF050906)))
+        drawRect(backdrop)
+    }
     val sunCenter = Offset(size.width * 0.5f, size.height * 0.06f)
     drawCircle(Brush.radialGradient(listOf(Color(0xFFFFE0A1).copy(alpha = 0.30f), Color(0xFFFFB85C).copy(alpha = 0.07f), Color.Transparent)), size.width * 0.46f, sunCenter)
-    drawForestLayers(motion)
+    if (woodlandBackground == null) drawForestLayers(motion)
 
     val groundTop = size.height * 0.72f
-    drawOval(Color(0xFF090C08), Offset(-size.width * 0.08f, groundTop + 6.dp.toPx()), Size(size.width * 1.16f, size.height * 0.32f))
-    drawOval(
-        Brush.verticalGradient(listOf(Color(0xFF3E633C), Color(0xFF1A2A18), Color(0xFF0A100A))),
-        Offset(-size.width * 0.04f, groundTop - 8.dp.toPx()),
-        Size(size.width * 1.08f, size.height * 0.25f)
-    )
-    drawMossAndForestFloor(groundTop, motion)
+    if (woodlandBackground == null) {
+        drawOval(Color(0xFF090C08), Offset(-size.width * 0.08f, groundTop + 6.dp.toPx()), Size(size.width * 1.16f, size.height * 0.32f))
+        drawOval(
+            Brush.verticalGradient(listOf(Color(0xFF3E633C), Color(0xFF1A2A18), Color(0xFF0A100A))),
+            Offset(-size.width * 0.04f, groundTop - 8.dp.toPx()),
+            Size(size.width * 1.08f, size.height * 0.25f)
+        )
+        drawMossAndForestFloor(groundTop, motion)
+    }
 
-    val chestLeft = size.width * 0.32f
-    val chestTop = size.height * 0.47f
-    val chestWidth = size.width * 0.36f
-    val chestHeight = size.height * 0.27f
+    val chestLeft = size.width * 0.24f
+    val chestTop = size.height * 0.45f
+    val chestWidth = size.width * 0.52f
+    val chestHeight = size.height * 0.34f
     drawWoodenContainer(state, fill, motion, chestLeft, chestTop, chestWidth, chestHeight)
 
-    drawWoodlandCharacter(
+    if (!drawWoodlandAssetCharacter(
         center = Offset(size.width * 0.16f, size.height * 0.61f - contributionReaction * 5.dp.toPx()),
         identityId = state.participantA?.identityId ?: "bear",
         participantColor = colorA,
         facingRight = true,
-        reaction = if (state.latestContribution?.authorId == state.participantA?.id) contributionReaction else 0f,
+        reaction = if (motion.contributingParticipantId == state.participantA?.id) contributionReaction else 0f,
+        motion = motion
+    )) drawWoodlandCharacter(
+        center = Offset(size.width * 0.16f, size.height * 0.61f - contributionReaction * 5.dp.toPx()),
+        identityId = state.participantA?.identityId ?: "bear",
+        participantColor = colorA,
+        facingRight = true,
+        reaction = if (motion.contributingParticipantId == state.participantA?.id) contributionReaction else 0f,
         motion = motion
     )
-    drawWoodlandCharacter(
+    if (!drawWoodlandAssetCharacter(
         center = Offset(size.width * 0.84f, size.height * 0.61f - contributionReaction * 5.dp.toPx()),
         identityId = state.participantB?.identityId ?: "squirrel",
         participantColor = colorB,
         facingRight = false,
-        reaction = if (state.latestContribution?.authorId == state.participantB?.id) contributionReaction else 0f,
+        reaction = if (motion.contributingParticipantId == state.participantB?.id) contributionReaction else 0f,
+        motion = motion
+    )) drawWoodlandCharacter(
+        center = Offset(size.width * 0.84f, size.height * 0.61f - contributionReaction * 5.dp.toPx()),
+        identityId = state.participantB?.identityId ?: "squirrel",
+        participantColor = colorB,
+        facingRight = false,
+        reaction = if (motion.contributingParticipantId == state.participantB?.id) contributionReaction else 0f,
         motion = motion
     )
 
     if (motion.contribution > 0f) {
-        drawWoodlandContribution(state, motion.contribution, chestLeft, chestTop, chestWidth)
+        drawWoodlandContribution(state, motion.contribution, chestLeft, chestTop, chestWidth, motion.contributingParticipantId, motion.eventSeed)
     }
     if (settlementFlash > 0f) {
         repeat(if (motion.quality == ThemeRenderQuality.HIGH) 18 else 10) { index ->
@@ -958,6 +1132,47 @@ private fun DrawScope.drawWoodlandScene(
             )
         }
     }
+}
+
+private fun DrawScope.drawWoodlandAssetCharacter(
+    center: Offset,
+    identityId: String,
+    participantColor: Color,
+    facingRight: Boolean,
+    reaction: Float,
+    motion: SceneMotion
+): Boolean {
+    val image = motion.assets?.woodlandCharacters?.get(identityId) ?: return false
+    val heightRatio = when (identityId) {
+        "bear" -> 0.34f
+        "hedgehog" -> 0.22f
+        "fox", "raccoon" -> 0.29f
+        else -> 0.28f
+    }
+    var targetHeight = size.height * heightRatio
+    var targetWidth = targetHeight * image.width / image.height.toFloat()
+    val maxWidth = size.width * 0.29f
+    if (targetWidth > maxWidth) {
+        val factor = maxWidth / targetWidth
+        targetWidth *= factor
+        targetHeight *= factor
+    }
+    val visualCenter = Offset(center.x, size.height * 0.62f)
+    drawCircle(
+        Brush.radialGradient(listOf(participantColor.copy(alpha = 0.26f), Color.Transparent)),
+        radius = targetWidth.coerceAtLeast(targetHeight) * 0.72f,
+        center = visualCenter
+    )
+    val baseline = size.height * 0.78f - reaction * 6.dp.toPx()
+    val left = center.x - targetWidth / 2f
+    val top = baseline - targetHeight
+    withTransform({
+        if (!facingRight) scale(-1f, 1f, Offset(center.x, baseline - targetHeight / 2f))
+        rotate((if (facingRight) 1f else -1f) * reaction * 3.2f, Offset(center.x, baseline))
+    }) {
+        drawAssetInRect(image, left, top, targetWidth, targetHeight)
+    }
+    return true
 }
 
 private fun DrawScope.drawForestLayers(motion: SceneMotion) {
@@ -1076,110 +1291,62 @@ private fun DrawScope.drawWoodenContainer(
     width: Float,
     height: Float
 ) {
-    val settlementLift = sin(motion.settlement.coerceIn(0f, 1f) * PI).toFloat().coerceAtLeast(0f)
     drawOval(
         Brush.radialGradient(listOf(Color.Black.copy(alpha = 0.72f), Color.Transparent)),
-        Offset(left - width * 0.16f, top + height * 0.82f),
-        Size(width * 1.32f, height * 0.36f)
+        Offset(left - width * 0.10f, top + height * 0.76f),
+        Size(width * 1.20f, height * 0.30f)
     )
-    val container = Path().apply {
-        moveTo(left + width * 0.08f, top)
-        quadraticTo(left, top + height * 0.42f, left + width * 0.10f, top + height)
-        quadraticTo(left + width * 0.50f, top + height * 1.06f, left + width * 0.90f, top + height)
-        quadraticTo(left + width, top + height * 0.42f, left + width * 0.92f, top)
-        close()
-    }
-    drawPath(
-        container,
-        Brush.horizontalGradient(
-            listOf(Color(0xFF402315), Color(0xFFA96B37), Color(0xFFC4884A), Color(0xFF70401F), Color(0xFF301B12)),
-            left,
-            left + width
+    val logAsset = motion.assets?.woodlandContainer
+    if (logAsset != null) {
+        drawAssetInRect(logAsset, left, top, width, height)
+    } else {
+        drawRoundRect(
+            Brush.horizontalGradient(
+                listOf(Color(0xFF24150F), Color(0xFF704426), Color(0xFF9A673A), Color(0xFF3B2115)),
+                left,
+                left + width
+            ),
+            Offset(left, top + height * 0.12f),
+            Size(width, height * 0.76f),
+            CornerRadius(height * 0.28f)
         )
-    )
-    drawPath(container, Color(0xFFFFD79B).copy(alpha = 0.23f), style = Stroke(2.dp.toPx(), join = StrokeJoin.Round))
-
-    repeat(8) { index ->
-        val grainY = top + height * (0.10f + index * 0.115f)
-        val wave = Path().apply {
-            moveTo(left + width * 0.09f, grainY)
-            cubicTo(
-                left + width * 0.31f, grainY + sin(index * 1.3f) * 4.dp.toPx(),
-                left + width * 0.67f, grainY - cos(index * 0.9f) * 4.dp.toPx(),
-                left + width * 0.91f, grainY + sin(index * 0.7f) * 2.dp.toPx()
-            )
-        }
-        drawPath(wave, Color(0xFF2E170E).copy(alpha = 0.24f), style = Stroke((0.7f + index % 3 * 0.25f).dp.toPx(), cap = StrokeCap.Round))
     }
 
     val window = Path().apply {
-        moveTo(left + width * 0.20f, top + height * 0.30f)
-        quadraticTo(left + width * 0.50f, top + height * 0.24f, left + width * 0.80f, top + height * 0.30f)
-        lineTo(left + width * 0.75f, top + height * 0.78f)
-        quadraticTo(left + width * 0.50f, top + height * 0.84f, left + width * 0.25f, top + height * 0.78f)
+        moveTo(left + width * 0.31f, top + height * 0.39f)
+        quadraticTo(left + width * 0.50f, top + height * 0.34f, left + width * 0.69f, top + height * 0.39f)
+        lineTo(left + width * 0.67f, top + height * 0.70f)
+        quadraticTo(left + width * 0.50f, top + height * 0.74f, left + width * 0.33f, top + height * 0.70f)
         close()
     }
-    drawPath(window, Brush.verticalGradient(listOf(Color(0xFF080B08), Color(0xFF1B2116))))
+    drawPath(window, Brush.verticalGradient(listOf(Color(0xFF050704), Color(0xFF17140D))))
 
     val maxObjects = when (motion.quality) {
-        ThemeRenderQuality.LOW -> 10
-        ThemeRenderQuality.MEDIUM -> 18
-        ThemeRenderQuality.HIGH -> 28
+        ThemeRenderQuality.LOW -> 12
+        ThemeRenderQuality.MEDIUM -> 22
+        ThemeRenderQuality.HIGH -> 34
     }
     val visible = (maxObjects * fill).roundToInt().coerceIn(0, maxObjects)
     val total = state.participantAContributionMinor + state.participantBContributionMinor
     val ratioA = if (total == 0L) 0.5f else state.participantAContributionMinor.toFloat() / total.toFloat()
     clipPath(window) {
-        drawRect(
-            Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.035f), Color.Transparent)),
-            Offset(left + width * 0.18f, top + height * 0.24f),
-            Size(width * 0.64f, height * 0.62f)
-        )
         repeat(visible) { index ->
             val ownerA = index.toFloat() / maxObjects < ratioA
-            val identity = if (ownerA) state.participantA?.identityId.orEmpty() else state.participantB?.identityId.orEmpty()
-            val x = left + width * 0.26f + pseudo(index, 0.32f) * width * 0.48f
-            val row = index / 7
-            val y = top + height * 0.76f - row * 11.dp.toPx() - pseudo(index, 0.88f) * 4.dp.toPx()
-            drawWoodlandMaterial(identity, Offset(x, y), 0.72f)
+            val columns = 7
+            val row = index / columns
+            val column = index % columns
+            val x = left + width * 0.355f + column * width * 0.047f + (pseudo(index, 0.32f) - 0.5f) * 5.dp.toPx()
+            val y = top + height * 0.68f - row * 8.dp.toPx() - pseudo(index, 0.88f) * 2.dp.toPx()
+            drawWoodlandToken(ownerA, Offset(x, y), 0.68f, index * 19f)
         }
-    }
-    drawPath(window, Color(0xFFD8B47B).copy(alpha = 0.46f), style = Stroke(2.2.dp.toPx(), join = StrokeJoin.Round))
-    drawPath(window, Color.White.copy(alpha = 0.08f), style = Stroke(6.dp.toPx(), join = StrokeJoin.Round))
-
-    repeat(2) { band ->
-        val bandY = top + height * (0.18f + band * 0.70f)
-        drawLine(
-            Brush.horizontalGradient(listOf(Color(0xFF33261D), Color(0xFFC2935C), Color(0xFF463124)), left, left + width),
-            Offset(left + width * 0.06f, bandY),
-            Offset(left + width * 0.94f, bandY),
-            4.5.dp.toPx(),
-            StrokeCap.Round
+        drawRect(
+            Brush.linearGradient(listOf(Color.White.copy(alpha = 0.10f), Color.Transparent, Color.White.copy(alpha = 0.025f))),
+            Offset(left + width * 0.31f, top + height * 0.36f),
+            Size(width * 0.38f, height * 0.39f)
         )
     }
-
-    val slotWidth = width * 0.42f
-    rotate(-settlementLift * 13f, pivot = Offset(left + width / 2f, top)) {
-        drawRoundRect(
-            Brush.verticalGradient(listOf(Color(0xFFE1AB67), Color(0xFF8A5228), Color(0xFF4B2A18))),
-            Offset(left - 4.dp.toPx(), top - 15.dp.toPx() - settlementLift * 11.dp.toPx()),
-            Size(width + 8.dp.toPx(), 27.dp.toPx()),
-            CornerRadius(13.dp.toPx())
-        )
-        drawRoundRect(
-            Color(0xFF2A190F),
-            Offset(left + (width - slotWidth) / 2f, top - 7.dp.toPx() - settlementLift * 11.dp.toPx()),
-            Size(slotWidth, 5.5.dp.toPx()),
-            CornerRadius(4.dp.toPx())
-        )
-        drawLine(
-            Color.White.copy(alpha = 0.18f),
-            Offset(left + 10.dp.toPx(), top - 10.dp.toPx() - settlementLift * 11.dp.toPx()),
-            Offset(left + width - 10.dp.toPx(), top - 10.dp.toPx() - settlementLift * 11.dp.toPx()),
-            1.dp.toPx(),
-            StrokeCap.Round
-        )
-    }
+    drawPath(window, Color(0xFF21150D).copy(alpha = 0.88f), style = Stroke(3.6.dp.toPx(), join = StrokeJoin.Round))
+    drawPath(window, Color.White.copy(alpha = 0.17f), style = Stroke(0.8.dp.toPx(), join = StrokeJoin.Round))
 }
 
 private fun DrawScope.drawWoodlandCharacter(
@@ -1646,29 +1813,47 @@ private fun woodlandPalette(identityId: String): Pair<Color, Color> = when (iden
     else -> Color(0xFF9B7752) to Color(0xFF5B402A)
 }
 
-private fun DrawScope.drawWoodlandMaterial(identityId: String, center: Offset, scale: Float) {
-    when (identityId) {
-        "bear" -> {
-            drawCircle(Color(0xFFE5A329), 5.dp.toPx() * scale, center)
-            drawCircle(Color(0xFFFFE3A0).copy(alpha = 0.58f), 1.4.dp.toPx() * scale, center - Offset(1.5.dp.toPx(), 1.5.dp.toPx()))
+private fun DrawScope.drawWoodlandToken(
+    isWalnut: Boolean,
+    center: Offset,
+    scale: Float,
+    rotationDegrees: Float = 0f
+) {
+    rotate(rotationDegrees, center) {
+        if (isWalnut) {
+            val radius = 5.dp.toPx() * scale
+            drawOval(
+                Brush.linearGradient(listOf(Color(0xFFE0AD68), Color(0xFF9A6133), Color(0xFF4A2A18))),
+                center - Offset(radius, radius * 0.82f),
+                Size(radius * 2f, radius * 1.64f)
+            )
+            drawPath(
+                Path().apply {
+                    moveTo(center.x, center.y - radius * 0.72f)
+                    cubicTo(center.x - radius * 0.24f, center.y - radius * 0.30f, center.x + radius * 0.22f, center.y + radius * 0.25f, center.x, center.y + radius * 0.72f)
+                },
+                Color(0xFF422515).copy(alpha = 0.78f),
+                style = Stroke(0.85.dp.toPx() * scale, cap = StrokeCap.Round)
+            )
+            drawArc(Color.White.copy(alpha = 0.20f), 198f, 86f, false, center - Offset(radius * 0.72f, radius * 0.52f), Size(radius * 1.28f, radius), style = Stroke(0.7.dp.toPx() * scale))
+        } else {
+            val radius = 4.7.dp.toPx() * scale
+            drawOval(
+                Brush.linearGradient(listOf(Color(0xFFD99A52), Color(0xFF9B5429), Color(0xFF552A18))),
+                center - Offset(radius * 0.74f, radius),
+                Size(radius * 1.48f, radius * 2f)
+            )
+            drawArc(
+                Brush.verticalGradient(listOf(Color(0xFF604128), Color(0xFF2B2117))),
+                180f,
+                180f,
+                true,
+                center - Offset(radius * 0.82f, radius * 1.12f),
+                Size(radius * 1.64f, radius * 0.88f)
+            )
+            drawLine(Color(0xFF392416), center - Offset(0f, radius * 1.08f), center - Offset(-radius * 0.16f, radius * 1.48f), 0.9.dp.toPx() * scale, StrokeCap.Round)
+            drawOval(Color.White.copy(alpha = 0.22f), center - Offset(radius * 0.42f, radius * 0.62f), Size(radius * 0.22f, radius * 0.60f))
         }
-        "squirrel", "hedgehog" -> {
-            drawOval(Color(0xFF8B552F), center - Offset(4.dp.toPx(), 5.dp.toPx()) * scale, Size(8.dp.toPx() * scale, 10.dp.toPx() * scale))
-            drawArc(Color(0xFFD5A56C), 185f, 170f, false, center - Offset(4.dp.toPx(), 5.dp.toPx()) * scale, Size(8.dp.toPx() * scale, 7.dp.toPx() * scale), style = Stroke(2.dp.toPx() * scale))
-        }
-        "fox" -> {
-            drawCircle(Color(0xFFB8423C), 4.5.dp.toPx() * scale, center)
-            drawLine(Color(0xFF5B843F), center - Offset(0f, 4.dp.toPx() * scale), center + Offset(2.dp.toPx() * scale, -8.dp.toPx() * scale), 1.5.dp.toPx() * scale)
-        }
-        "rabbit" -> {
-            drawOval(Color(0xFFE88739), center - Offset(3.dp.toPx(), 6.dp.toPx()) * scale, Size(6.dp.toPx() * scale, 12.dp.toPx() * scale))
-            drawLine(Color(0xFF75A85A), center - Offset(0f, 5.dp.toPx() * scale), center + Offset(3.dp.toPx() * scale, -9.dp.toPx() * scale), 1.5.dp.toPx() * scale)
-        }
-        "raccoon" -> {
-            drawCircle(Color(0xFFD7B35E), 4.5.dp.toPx() * scale, center)
-            drawCircle(Color(0xFFFFE49C), 3.dp.toPx() * scale, center, style = Stroke(1.2.dp.toPx() * scale))
-        }
-        else -> drawCircle(Color(0xFFD7A25A), 4.dp.toPx() * scale, center)
     }
 }
 
@@ -1677,25 +1862,35 @@ private fun DrawScope.drawWoodlandContribution(
     progress: Float,
     chestLeft: Float,
     chestTop: Float,
-    chestWidth: Float
+    chestWidth: Float,
+    contributingParticipantId: String?,
+    eventSeed: Int
 ) {
-    val expense = state.latestContribution ?: return
-    val fromLeft = expense.authorId == state.participantA?.id
+    val participantId = contributingParticipantId ?: return
+    val fromLeft = participantId == state.participantA?.id
     val origin = Offset(if (fromLeft) size.width * 0.20f else size.width * 0.80f, size.height * 0.48f)
-    val target = Offset(chestLeft + chestWidth / 2f, chestTop - 8.dp.toPx())
-    val arc = Path().apply {
-        moveTo(origin.x, origin.y)
-        quadraticTo(size.width * 0.5f, size.height * 0.24f, target.x, target.y)
+    val target = Offset(chestLeft + chestWidth / 2f, chestTop + 6.dp.toPx())
+    repeat(3) { tokenIndex ->
+        val delayed = ((progress - tokenIndex * 0.105f) / 0.78f).coerceIn(0f, 1f)
+        if (delayed > 0f && delayed < 1f) {
+            val arc = Path().apply {
+                moveTo(origin.x, origin.y + tokenIndex * 3.dp.toPx())
+                quadraticTo(size.width * 0.5f, size.height * (0.20f + tokenIndex * 0.018f), target.x, target.y)
+            }
+            val measure = PathMeasure().apply { setPath(arc, false) }
+            val position = measure.getPosition(measure.length * delayed)
+            drawWoodlandToken(
+                isWalnut = fromLeft,
+                center = position,
+                scale = 0.92f + sin(delayed * PI).toFloat() * 0.40f,
+                rotationDegrees = delayed * (270f + tokenIndex * 45f) * if (fromLeft) 1f else -1f
+            )
+        }
     }
-    val measure = PathMeasure().apply { setPath(arc, false) }
-    val travel = (progress / 0.78f).coerceIn(0f, 1f)
-    val position = measure.getPosition(measure.length * travel)
-    val identity = if (fromLeft) state.participantA.identityId else state.participantB?.identityId.orEmpty()
-    drawWoodlandMaterial(identity, position, 1f + sin(travel * PI).toFloat() * 0.45f)
     if (progress > 0.72f) {
         val impact = ((progress - 0.72f) / 0.28f).coerceIn(0f, 1f)
         repeat(5) { index ->
-            val angle = PI.toFloat() * (1.1f + index * 0.2f)
+            val angle = PI.toFloat() * (1.1f + index * 0.2f + pseudo(index xor eventSeed, 0.46f) * 0.08f)
             drawCircle(
                 Color(0xFFFFD790).copy(alpha = 1f - impact),
                 1.5.dp.toPx(),
@@ -1717,47 +1912,111 @@ private fun DrawScope.drawMempoolScene(
     val settlementEnergy = sin(motion.settlement.coerceIn(0f, 1f) * PI).toFloat().coerceAtLeast(0f)
     val settlementStrike = pulse(motion.settlement, 0.16f, 0.34f, 0.52f)
 
-    val backdrop = motion.materials?.mempool(size.width, size.height, motion.ambient, settlementEnergy, colorA, colorB)
-        ?: Brush.verticalGradient(listOf(Color(0xFF111B27), Color(0xFF080D14), Color(0xFF020407)))
-    drawRect(backdrop)
-    drawTechChamber(motion, colorA, colorB, orange)
-    drawEnergyPylon(Offset(size.width * 0.14f, size.height * 0.31f), colorA, motion, settlementEnergy)
-    drawEnergyPylon(Offset(size.width * 0.86f, size.height * 0.31f), colorB, motion, settlementEnergy)
-
-    val railY = size.height * 0.80f
-    drawLine(Brush.horizontalGradient(listOf(Color(0xFF20272E), Color(0xFFB4C4D1), Color(0xFF293039))), Offset(0f, railY), Offset(size.width, railY), 4.dp.toPx())
-    drawLine(Brush.horizontalGradient(listOf(Color(0xFF151A1F), Color(0xFF788691), Color(0xFF171C21))), Offset(0f, railY + 17.dp.toPx()), Offset(size.width, railY + 17.dp.toPx()), 5.dp.toPx())
-    repeat(12) { index ->
-        val x = size.width * index / 11f
-        drawLine(Color(0xFF47515B), Offset(x - 8.dp.toPx(), railY - 5.dp.toPx()), Offset(x + 9.dp.toPx(), railY + 23.dp.toPx()), 3.dp.toPx())
-        drawCircle(orange.copy(alpha = 0.22f), 1.3.dp.toPx(), Offset(x, railY + 8.dp.toPx()))
+    val mineBackground = motion.assets?.background
+    if (mineBackground != null) {
+        drawAssetCover(mineBackground)
+        drawRect(Color(0xFF02060A).copy(alpha = 0.16f))
+    } else {
+        val backdrop = motion.materials?.mempool(size.width, size.height, motion.ambient, settlementEnergy, colorA, colorB)
+            ?: Brush.verticalGradient(listOf(Color(0xFF111B27), Color(0xFF080D14), Color(0xFF020407)))
+        drawRect(backdrop)
+        drawTechChamber(motion, colorA, colorB, orange)
+        drawEnergyPylon(Offset(size.width * 0.14f, size.height * 0.31f), colorA, motion, settlementEnergy)
+        drawEnergyPylon(Offset(size.width * 0.86f, size.height * 0.31f), colorB, motion, settlementEnergy)
     }
 
-    drawMiningOperator(
+    val railY = size.height * 0.80f
+    if (mineBackground == null) {
+        drawLine(Brush.horizontalGradient(listOf(Color(0xFF20272E), Color(0xFFB4C4D1), Color(0xFF293039))), Offset(0f, railY), Offset(size.width, railY), 4.dp.toPx())
+        drawLine(Brush.horizontalGradient(listOf(Color(0xFF151A1F), Color(0xFF788691), Color(0xFF171C21))), Offset(0f, railY + 17.dp.toPx()), Offset(size.width, railY + 17.dp.toPx()), 5.dp.toPx())
+        repeat(12) { index ->
+            val x = size.width * index / 11f
+            drawLine(Color(0xFF47515B), Offset(x - 8.dp.toPx(), railY - 5.dp.toPx()), Offset(x + 9.dp.toPx(), railY + 23.dp.toPx()), 3.dp.toPx())
+            drawCircle(orange.copy(alpha = 0.22f), 1.3.dp.toPx(), Offset(x, railY + 8.dp.toPx()))
+        }
+    }
+
+    if (!drawMinerAsset(
+        center = Offset(size.width * 0.16f, size.height * 0.61f),
+        image = if (motion.participantAMiner == MinerAppearance.MAN) motion.assets?.minerLeft else motion.assets?.minerRight,
+        facingRight = true,
+        sourceFacesRight = motion.participantAMiner == MinerAppearance.MAN,
+        accent = colorA,
+        strike = maxOf(if (motion.contributingParticipantId == state.participantA?.id) contributionReaction else 0f, settlementStrike),
+        motion = motion
+    )) drawMiningOperator(
         center = Offset(size.width * 0.16f, size.height * 0.61f),
         facingRight = true,
         accent = colorA,
-        strike = maxOf(if (state.latestContribution?.authorId == state.participantA?.id) contributionReaction else 0f, settlementStrike),
+        strike = maxOf(if (motion.contributingParticipantId == state.participantA?.id) contributionReaction else 0f, settlementStrike),
         motion = motion
     )
-    drawMiningOperator(
+    if (!drawMinerAsset(
+        center = Offset(size.width * 0.84f, size.height * 0.61f),
+        image = if (motion.participantBMiner == MinerAppearance.MAN) motion.assets?.minerLeft else motion.assets?.minerRight,
+        facingRight = false,
+        sourceFacesRight = motion.participantBMiner == MinerAppearance.MAN,
+        accent = colorB,
+        strike = if (motion.contributingParticipantId == state.participantB?.id) contributionReaction else settlementStrike * 0.38f,
+        motion = motion
+    )) drawMiningOperator(
         center = Offset(size.width * 0.84f, size.height * 0.61f),
         facingRight = false,
         accent = colorB,
-        strike = if (state.latestContribution?.authorId == state.participantB?.id) contributionReaction else settlementStrike * 0.38f,
+        strike = if (motion.contributingParticipantId == state.participantB?.id) contributionReaction else settlementStrike * 0.38f,
         motion = motion
     )
 
-    val cartLeft = size.width * 0.31f
-    val cartTop = size.height * 0.49f
-    val cartWidth = size.width * 0.38f
-    val cartHeight = size.height * 0.24f
+    val cartLeft = size.width * 0.28f
+    val cartTop = size.height * 0.45f
+    val cartWidth = size.width * 0.44f
+    val cartHeight = size.height * 0.32f
     drawMineCart(state, fill, motion, cartLeft, cartTop, cartWidth, cartHeight)
 
     if (motion.contribution > 0f) {
-        drawMempoolContribution(state, motion.contribution, cartLeft, cartTop, cartWidth)
+        drawMempoolContribution(state, motion.contribution, cartLeft, cartTop, cartWidth, motion.contributingParticipantId, motion.eventSeed)
     }
     if (motion.settlement > 0f) drawMempoolSettlement(motion, orange, colorA, colorB, cartTop)
+}
+
+private fun DrawScope.drawMinerAsset(
+    center: Offset,
+    image: ImageBitmap?,
+    facingRight: Boolean,
+    sourceFacesRight: Boolean,
+    accent: Color,
+    strike: Float,
+    motion: SceneMotion
+): Boolean {
+    image ?: return false
+    var targetHeight = size.height * 0.47f
+    var targetWidth = targetHeight * image.width / image.height.toFloat()
+    val maxWidth = size.width * 0.31f
+    if (targetWidth > maxWidth) {
+        val factor = maxWidth / targetWidth
+        targetWidth *= factor
+        targetHeight *= factor
+    }
+    val baseline = size.height * 0.82f - strike * 5.dp.toPx()
+    drawCircle(
+        Brush.radialGradient(listOf(accent.copy(alpha = 0.24f), Color.Transparent)),
+        radius = targetHeight * 0.48f,
+        center = Offset(center.x, baseline - targetHeight * 0.48f)
+    )
+    val left = center.x - targetWidth / 2f
+    val top = baseline - targetHeight
+    withTransform({
+        if (facingRight != sourceFacesRight) {
+            scale(-1f, 1f, Offset(center.x, baseline - targetHeight / 2f))
+        }
+        rotate((center.x / size.width - 0.5f) * strike * 5f, Offset(center.x, baseline))
+    }) {
+        drawAssetInRect(image, left, top, targetWidth, targetHeight)
+    }
+    if (strike > 0.55f && motion.quality != ThemeRenderQuality.LOW) {
+        drawCircle(Color(0xFFFFD59A).copy(alpha = strike * 0.55f), 3.dp.toPx(), Offset(center.x, baseline - targetHeight * 0.18f))
+    }
+    return true
 }
 
 private fun pulse(value: Float, start: Float, peak: Float, end: Float): Float = when {
@@ -2026,6 +2285,61 @@ private fun DrawScope.drawMineCart(
         center
     )
 
+    val cartAsset = motion.assets?.mineCart
+    if (cartAsset != null) {
+        drawAssetInRect(cartAsset, left + shake, top, width, height)
+        val cavity = Path().apply {
+            moveTo(left + width * 0.14f + shake, top + height * 0.12f)
+            lineTo(left + width * 0.86f + shake, top + height * 0.12f)
+            lineTo(left + width * 0.73f + shake, top + height * 0.46f)
+            lineTo(left + width * 0.27f + shake, top + height * 0.46f)
+            close()
+        }
+        val maxBlocks = when (motion.quality) {
+            ThemeRenderQuality.LOW -> 8
+            ThemeRenderQuality.MEDIUM -> 15
+            ThemeRenderQuality.HIGH -> 24
+        }
+        val visible = (maxBlocks * fill).roundToInt().coerceIn(0, maxBlocks)
+        val total = state.participantAContributionMinor + state.participantBContributionMinor
+        val ratioA = if (total == 0L) 0.5f else state.participantAContributionMinor.toFloat() / total.toFloat()
+        clipPath(cavity) {
+            repeat(visible) { index ->
+                val columns = 6
+                val row = index / columns
+                val column = index % columns
+                val blockWidth = width * 0.09f
+                val blockHeight = height * 0.075f
+                val x = left + width * 0.225f + column * width * 0.095f + shake
+                val y = top + height * 0.43f - (row + 1) * blockHeight * 0.88f
+                val ownerColor = if (index.toFloat() / maxBlocks < ratioA) {
+                    state.participantA?.colorHex.sceneColor(Color(0xFF38E66B))
+                } else {
+                    state.participantB?.colorHex.sceneColor(Color(0xFF147DFF))
+                }
+                drawRoundRect(
+                    Brush.linearGradient(
+                        listOf(Color(0xFFFFD18A), orange, Color(0xFF713316), ownerColor.copy(alpha = 0.78f)),
+                        Offset(x, y),
+                        Offset(x + blockWidth, y + blockHeight)
+                    ),
+                    Offset(x, y),
+                    Size(blockWidth, blockHeight),
+                    CornerRadius(1.4.dp.toPx())
+                )
+                drawLine(Color.White.copy(alpha = 0.34f), Offset(x + 1.5.dp.toPx(), y + 1.5.dp.toPx()), Offset(x + blockWidth * 0.64f, y + 1.5.dp.toPx()), 0.6.dp.toPx())
+            }
+        }
+        drawLine(
+            Brush.horizontalGradient(listOf(Color(0xFF242629), Color(0xFFC4B8A5), Color(0xFF27292C))),
+            Offset(left + width * 0.10f + shake, top + height * 0.115f),
+            Offset(left + width * 0.90f + shake, top + height * 0.115f),
+            3.dp.toPx(),
+            StrokeCap.Round
+        )
+        return
+    }
+
     val cart = Path().apply {
         moveTo(left + shake, top)
         lineTo(left + width + shake, top)
@@ -2118,10 +2432,12 @@ private fun DrawScope.drawMempoolContribution(
     progress: Float,
     cartLeft: Float,
     cartTop: Float,
-    cartWidth: Float
+    cartWidth: Float,
+    contributingParticipantId: String?,
+    eventSeed: Int
 ) {
-    val expense = state.latestContribution ?: return
-    val fromLeft = expense.authorId == state.participantA?.id
+    val participantId = contributingParticipantId ?: return
+    val fromLeft = participantId == state.participantA?.id
     val accent = if (fromLeft) {
         state.participantA.colorHex.sceneColor(Color(0xFF38E66B))
     } else {
@@ -2185,7 +2501,7 @@ private fun DrawScope.drawMempoolContribution(
             style = Stroke((2f - impact).coerceAtLeast(0.6f).dp.toPx())
         )
         repeat(12) { index ->
-            val angle = pseudo(index, 0.91f) * PI.toFloat() * 2f
+            val angle = pseudo(index xor eventSeed, 0.91f) * PI.toFloat() * 2f
             val distance = impact * (9 + index * 1.8f).dp.toPx()
             val sparkStart = target + Offset(cos(angle) * distance * 0.48f, sin(angle) * distance * 0.48f)
             val sparkEnd = target + Offset(cos(angle) * distance, sin(angle) * distance)
@@ -2222,7 +2538,7 @@ private fun DrawScope.drawMempoolSettlement(
         }
         repeat(12) { index ->
             val angle = index / 12f * PI.toFloat() * 2f + motion.ambient * 0.65f
-            val distance = (30f + (1f - charge) * 48f + pseudo(index, 0.37f) * 16f).dp.toPx()
+            val distance = (30f + (1f - charge) * 48f + pseudo(index xor motion.eventSeed, 0.37f) * 16f).dp.toPx()
             val dot = center + Offset(cos(angle) * distance, sin(angle) * distance * 0.46f)
             drawCircle(if (index % 2 == 0) colorA.copy(alpha = charge * 0.72f) else colorB.copy(alpha = charge * 0.72f), (1f + index % 3 * 0.45f).dp.toPx(), dot)
         }
@@ -2259,11 +2575,12 @@ private fun DrawScope.drawMempoolSettlement(
         }
 
         repeat(24) { index ->
-            val angle = pseudo(index, 0.14f) * PI.toFloat() * 2f
-            val speed = (42f + pseudo(index, 0.71f) * 130f).dp.toPx()
+            val seededIndex = index xor motion.eventSeed
+            val angle = pseudo(seededIndex, 0.14f) * PI.toFloat() * 2f
+            val speed = (42f + pseudo(seededIndex, 0.71f) * 130f).dp.toPx()
             val gravity = 105f.dp.toPx()
             val t = release
-            val originOffset = Offset((pseudo(index, 0.44f) - 0.5f) * 28.dp.toPx(), 0f)
+            val originOffset = Offset((pseudo(seededIndex, 0.44f) - 0.5f) * 28.dp.toPx(), 0f)
             val particle = center + originOffset + Offset(cos(angle) * speed * t, sin(angle) * speed * t + gravity * t * t)
             val previous = center + originOffset + Offset(cos(angle) * speed * (t - 0.045f).coerceAtLeast(0f), sin(angle) * speed * (t - 0.045f).coerceAtLeast(0f) + gravity * (t - 0.045f).coerceAtLeast(0f) * (t - 0.045f).coerceAtLeast(0f))
             val particleColor = when (index % 3) {
@@ -2271,7 +2588,7 @@ private fun DrawScope.drawMempoolSettlement(
                 1 -> colorB
                 else -> orange
             }
-            drawLine(particleColor.copy(alpha = fade * (0.45f + pseudo(index, 0.19f) * 0.45f)), previous, particle, (0.7f + index % 3 * 0.45f).dp.toPx(), StrokeCap.Round)
+            drawLine(particleColor.copy(alpha = fade * (0.45f + pseudo(seededIndex, 0.19f) * 0.45f)), previous, particle, (0.7f + index % 3 * 0.45f).dp.toPx(), StrokeCap.Round)
         }
 
         val assembly = smoothStep(0.42f, 0.72f, progress) * fade

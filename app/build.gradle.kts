@@ -7,6 +7,17 @@ android {
     namespace = "com.nomisma.app"
     compileSdk = 37
 
+    // Local/dev-only release signing. This is intentionally the Android debug
+    // key, so the resulting APK is not suitable for store distribution.
+    signingConfigs {
+        create("debugRelease") {
+            storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.nomisma.app"
         minSdk = 26
@@ -17,6 +28,13 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("debugRelease")
+            isMinifyEnabled = false
+        }
     }
 
     packaging {

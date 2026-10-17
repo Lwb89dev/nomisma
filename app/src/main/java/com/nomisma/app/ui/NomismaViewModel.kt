@@ -14,6 +14,9 @@ import com.nomisma.app.nostr.NostrSessionState
 import com.nomisma.app.nostr.Signer
 import com.nomisma.app.nostr.SyncConfiguration
 import com.nomisma.app.theme.ThemeRegistry
+import com.nomisma.app.theme.ThemeEventCoordinator
+import com.nomisma.app.theme.ThemeEventOrigin
+import com.nomisma.app.theme.ThemeEventQueueState
 import com.nomisma.app.theme.ThemeStateMapper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,9 +34,13 @@ class NomismaViewModel(
     private val syncController = NostrSessionController(signer, repository, viewModelScope)
     private val repositoryMutex = Mutex()
     private var visibleWorkCount = 0
+    private val themeEventCoordinator = ThemeEventCoordinator()
 
     private val _snapshot = MutableStateFlow(LedgerSnapshot.empty())
     val snapshot: StateFlow<LedgerSnapshot> = _snapshot.asStateFlow()
+
+    private val _themeEvents = MutableStateFlow(ThemeEventQueueState())
+    val themeEvents: StateFlow<ThemeEventQueueState> = _themeEvents.asStateFlow()
 
     private val _isBusy = MutableStateFlow(false)
     val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
@@ -45,8 +52,16 @@ class NomismaViewModel(
     init {
         refresh()
         viewModelScope.launch {
-            syncController.remoteChanges.collect {
-                reloadSnapshot(showBusy = false)
+            syncController.remoteChanges.collect { change ->
+                reloadSnapshot(
+                    showBusy = false,
+                    origin = if (change.isBacklogReconciliation) {
+                        ThemeEventOrigin.RECONCILIATION
+                    } else {
+                        ThemeEventOrigin.REMOTE
+                    },
+                    reconcile = change.isBacklogReconciliation
+                )
             }
         }
     }
@@ -200,9 +215,11 @@ class NomismaViewModel(
         viewModelScope.launch {
             beginVisibleWork()
             try {
-                _snapshot.value = repositoryMutex.withLock {
+                val previous = _snapshot.value
+                val current = repositoryMutex.withLock {
                     repository.adoptPairingLedger(ledgerId)
                 }
+                publishSnapshotTransition(previous, current, ThemeEventOrigin.RECONCILIATION, reconcile = true)
                 onSuccess()
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -219,11 +236,22 @@ class NomismaViewModel(
         _uiMessage.value = null
     }
 
+    fun consumeThemeEvent(eventId: String) {
+        _themeEvents.value = themeEventCoordinator.consume(eventId)
+    }
+
+    fun reconcileStaleThemeEvents() {
+        val current = ThemeStateMapper.map(_snapshot.value)
+        _themeEvents.value = themeEventCoordinator.collapseToReconciliation(current)
+    }
+
     private fun mutate(block: suspend () -> LedgerSnapshot) {
         viewModelScope.launch {
             beginVisibleWork()
             try {
-                _snapshot.value = repositoryMutex.withLock { block() }
+                val previous = _snapshot.value
+                val current = repositoryMutex.withLock { block() }
+                publishSnapshotTransition(previous, current, ThemeEventOrigin.LOCAL)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
@@ -235,11 +263,17 @@ class NomismaViewModel(
         }
     }
 
-    private fun reloadSnapshot(showBusy: Boolean) {
+    private fun reloadSnapshot(
+        showBusy: Boolean,
+        origin: ThemeEventOrigin = ThemeEventOrigin.LOCAL,
+        reconcile: Boolean = false
+    ) {
         viewModelScope.launch {
             if (showBusy) beginVisibleWork()
             try {
-                _snapshot.value = repositoryMutex.withLock { repository.loadSnapshot() }
+                val previous = _snapshot.value
+                val current = repositoryMutex.withLock { repository.loadSnapshot() }
+                publishSnapshotTransition(previous, current, origin, reconcile)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
@@ -248,6 +282,21 @@ class NomismaViewModel(
                 if (showBusy) endVisibleWork()
             }
         }
+    }
+
+    private fun publishSnapshotTransition(
+        previous: LedgerSnapshot,
+        current: LedgerSnapshot,
+        origin: ThemeEventOrigin,
+        reconcile: Boolean = false
+    ) {
+        _snapshot.value = current
+        _themeEvents.value = themeEventCoordinator.accept(
+            previous = ThemeStateMapper.map(previous),
+            current = ThemeStateMapper.map(current),
+            origin = origin,
+            reconcile = reconcile
+        )
     }
 
     private fun beginVisibleWork() {

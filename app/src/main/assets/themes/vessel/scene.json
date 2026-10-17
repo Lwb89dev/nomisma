@@ -1,0 +1,12 @@
+{
+  "id": "vessel",
+  "version": 1,
+  "background": "background.webp",
+  "pitcher": "pitcher.webp",
+  "layers": [
+    { "id": "background", "role": "environment", "required": true },
+    { "id": "liquid", "role": "runtime_procedural", "required": true },
+    { "id": "pitcher", "role": "foreground_glass", "file": "pitcher.webp", "required": true }
+  ],
+  "safeArea": { "left": 0.08, "top": 0.08, "right": 0.92, "bottom": 0.90 }
+}

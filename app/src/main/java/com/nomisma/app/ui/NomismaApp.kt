@@ -127,6 +127,7 @@ import com.nomisma.app.theme.ThemeIdentityRegistry
 import com.nomisma.app.theme.ParticipantColorPalette
 import com.nomisma.app.theme.ThemeRegistry
 import com.nomisma.app.ui.theme.NomismaThemeScene
+import com.nomisma.app.ui.theme.MinerAppearance
 import com.nomisma.app.ui.theme.ThemeMotionPreference
 import com.nomisma.app.ui.theme.ThemeQualityPreference
 import java.util.Locale
@@ -143,9 +144,17 @@ private val Panel = Color(0xFF151923)
 private val PanelLight = Color(0xFF202634)
 private val Ink = Color(0xFFF4F6FA)
 private val Muted = Color(0xFF9BA5B7)
-private const val DEFAULT_RELAY_URL = "ws://192.168.1.10:7777"
+private const val DEFAULT_RELAY_URL = "wss://relay.damus.io"
 private const val APP_PREFERENCES = "nomisma_app"
 private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete_v1"
+
+private data class RelayPreset(val name: String, val url: String, val detail: String)
+
+private val RELAY_PRESETS = listOf(
+    RelayPreset("Damus", "wss://relay.damus.io", "Relay pubblico generalista e ampiamente compatibile."),
+    RelayPreset("nos.lol", "wss://nos.lol", "Relay pubblico con filtri antispam e ampia adozione."),
+    RelayPreset("Primal", "wss://relay.primal.net", "Infrastruttura pubblica Primal, distribuita e ad alta disponibilità.")
+)
 
 @Composable
 fun NomismaApp(
@@ -160,6 +169,7 @@ fun NomismaApp(
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     val uiMessage by viewModel.uiMessage.collectAsStateWithLifecycle()
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
+    val themeEvents by viewModel.themeEvents.collectAsStateWithLifecycle()
     val visualPreferences = remember {
         context.getSharedPreferences(VISUAL_PREFERENCES, Context.MODE_PRIVATE)
     }
@@ -175,6 +185,10 @@ fun NomismaApp(
     var motionPreference by rememberSaveable {
         mutableStateOf(ThemeMotionPreference.fromStorage(visualPreferences.getString(KEY_VISUAL_MOTION, null)))
     }
+    var minerAppearances by remember(snapshot.id) { mutableStateOf<Map<String, MinerAppearance>>(emptyMap()) }
+    var onboardingRelayUrl by rememberSaveable {
+        mutableStateOf(syncPreferences.getString(KEY_RELAY_URL, DEFAULT_RELAY_URL) ?: DEFAULT_RELAY_URL)
+    }
     var autoConnectAttempted by rememberSaveable { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     var tab by rememberSaveable { mutableStateOf(AppTab.HOME) }
@@ -183,6 +197,17 @@ fun NomismaApp(
     var onboardingDecisionMade by rememberSaveable { mutableStateOf(false) }
     var showOnboarding by rememberSaveable { mutableStateOf(false) }
     var onboardingStep by rememberSaveable { mutableIntStateOf(0) }
+
+    LaunchedEffect(snapshot.participants) {
+        minerAppearances = snapshot.participants.mapIndexed { index, participant ->
+            val fallback = if (index == 0) MinerAppearance.MAN else MinerAppearance.WOMAN
+            participant.id to (
+                visualPreferences.getString(minerAppearanceKey(participant.id), null)
+                    ?.let(MinerAppearance::fromStorage)
+                    ?: fallback
+                )
+        }.toMap()
+    }
 
     LaunchedEffect(snapshot.id, incomingPairingCode) {
         if (!onboardingDecisionMade && snapshot.id.isNotBlank()) {
@@ -246,11 +271,20 @@ fun NomismaApp(
             snapshot.id.isBlank() -> AppLoadingScreen()
             showOnboarding -> NomismaOnboarding(
                 step = onboardingStep,
+                selectedTheme = snapshot.themeId,
+                relayUrl = onboardingRelayUrl,
                 identityPubkey = syncState.identity?.pubkey,
                 identityError = syncState.error,
                 isVerifyingIdentity = syncState.isVerifyingIdentity,
                 signerAvailable = signer != null,
-                onStepChange = { onboardingStep = it.coerceIn(0, 2) },
+                onStepChange = { onboardingStep = it.coerceIn(0, 3) },
+                onThemeSelected = { themeId ->
+                    viewModel.selectTheme(themeId, localOperationAuthor(context, snapshot))
+                },
+                onRelaySelected = { relay ->
+                    onboardingRelayUrl = relay
+                    syncPreferences.edit().putString(KEY_RELAY_URL, relay).apply()
+                },
                 onVerifyIdentity = viewModel::verifySignerIdentity,
                 onFinish = ::finishOnboarding,
                 onSkip = { finishOnboarding(openSettings = false) }
@@ -283,9 +317,10 @@ fun NomismaApp(
                         syncState = syncState,
                         qualityPreference = qualityPreference,
                         motionPreference = motionPreference,
-                        onThemeSelected = { themeId ->
-                            viewModel.selectTheme(themeId, localOperationAuthor(context, snapshot))
-                        },
+                        minerAppearances = minerAppearances,
+                        themeEvents = themeEvents.pending,
+                        onThemeEventConsumed = viewModel::consumeThemeEvent,
+                        onStaleThemeEvents = viewModel::reconcileStaleThemeEvents,
                         onSettle = { method, note ->
                             viewModel.settleCurrentCycle(localOperationAuthor(context, snapshot), method, note)
                         },
@@ -304,6 +339,7 @@ fun NomismaApp(
                         syncState = syncState,
                         qualityPreference = qualityPreference,
                         motionPreference = motionPreference,
+                        minerAppearances = minerAppearances,
                         onQualityPreference = { preference ->
                             qualityPreference = preference
                             visualPreferences.edit().putString(KEY_VISUAL_QUALITY, preference.name).apply()
@@ -311,6 +347,10 @@ fun NomismaApp(
                         onMotionPreference = { preference ->
                             motionPreference = preference
                             visualPreferences.edit().putString(KEY_VISUAL_MOTION, preference.name).apply()
+                        },
+                        onMinerAppearance = { participantId, appearance ->
+                            minerAppearances = minerAppearances + (participantId to appearance)
+                            visualPreferences.edit().putString(minerAppearanceKey(participantId), appearance.name).apply()
                         },
                         onConnect = viewModel::connectSync,
                         onDisconnect = viewModel::disconnectSync,
@@ -549,11 +589,15 @@ private fun AppLoadingScreen() {
 @Composable
 private fun NomismaOnboarding(
     step: Int,
+    selectedTheme: String,
+    relayUrl: String,
     identityPubkey: String?,
     identityError: String?,
     isVerifyingIdentity: Boolean,
     signerAvailable: Boolean,
     onStepChange: (Int) -> Unit,
+    onThemeSelected: (String) -> Unit,
+    onRelaySelected: (String) -> Unit,
     onVerifyIdentity: () -> Unit,
     onFinish: (Boolean) -> Unit,
     onSkip: () -> Unit
@@ -561,11 +605,13 @@ private fun NomismaOnboarding(
     val titles = listOf(
         "Il vostro denaro, raccontato insieme",
         "Privato e locale per impostazione",
+        "Scegli il relay principale",
         "Collega i due dispositivi"
     )
     val descriptions = listOf(
         "Nomisma unisce un ledger condiviso, analisi finanziarie e scene che reagiscono alle vostre spese.",
         "Ogni operazione viene salvata prima sul dispositivo. Amber custodisce la chiave Nostr e firma senza consegnarla a Nomisma.",
+        "Seleziona l'infrastruttura Nostr usata per recapitare gli eventi cifrati. Potrai cambiarla in qualsiasi momento.",
         "Ogni persona verifica Amber e scambia il proprio codice. L'importazione configura i ruoli, ma la connessione parte solo quando la confermi."
     )
     BackHandler { if (step > 0) onStepChange(step - 1) else onSkip() }
@@ -590,7 +636,7 @@ private fun NomismaOnboarding(
         }
         OnboardingArtwork(step)
         Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            repeat(3) { index ->
+            repeat(4) { index ->
                 Box(
                     Modifier
                         .width(if (index == step) 28.dp else 8.dp)
@@ -608,6 +654,8 @@ private fun NomismaOnboarding(
                 OnboardingFeature("Ledger event-based", "Spese, modifiche e settlement restano ricostruibili.")
                 OnboardingFeature("Tre scene condivise", "Vessel, Woodland e Mempool rappresentano gli stessi dati.")
                 OnboardingFeature("Analisi locali", "Filtri e grafici non interrogano il relay.")
+                Text("Scegli l'ambientazione", color = Ink, fontWeight = FontWeight.SemiBold)
+                ThemeSelector(selectedTheme, onThemeSelected)
             }
             1 -> {
                 OnboardingFeature("Local-first", "Puoi registrare spese anche senza rete.")
@@ -635,6 +683,46 @@ private fun NomismaOnboarding(
                     }
                 }
             }
+            2 -> {
+                RELAY_PRESETS.forEach { preset ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable { onRelaySelected(preset.url) },
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (relayUrl == preset.url) Color(0xFF213126) else Panel
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier.size(12.dp).clip(CircleShape).background(
+                                    if (relayUrl == preset.url) Color(0xFFB8F36B) else PanelLight
+                                )
+                            )
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(preset.name, color = Ink, fontWeight = FontWeight.SemiBold)
+                                Text(preset.url, color = Color(0xFFB8F36B), style = MaterialTheme.typography.labelSmall)
+                                Text(preset.detail, color = Muted, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = relayUrl,
+                    onValueChange = onRelaySelected,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Relay personalizzato") },
+                    singleLine = true
+                )
+                Text(
+                    "Qui scegli il relay. La sessione cifrata verrà avviata solo dopo aver associato l'altro dispositivo.",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
             else -> {
                 OnboardingFeature("1 · Verifica Amber", "Ogni dispositivo ottiene la propria chiave pubblica.")
                 OnboardingFeature("2 · Scambia i codici", "Il codice non contiene spese né chiavi private.")
@@ -642,7 +730,7 @@ private fun NomismaOnboarding(
             }
         }
 
-        if (step < 2) {
+        if (step < 3) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (step > 0) {
                     OutlinedButton(onClick = { onStepChange(step - 1) }, modifier = Modifier.weight(1f)) { Text("Indietro") }
@@ -685,6 +773,7 @@ private fun OnboardingArtwork(step: Int) {
                 contentDescription = when (step) {
                     0 -> "Due partecipanti contribuiscono a un contenitore condiviso"
                     1 -> "Ledger locale protetto e identità custodita da Amber"
+                    2 -> "Scelta di una rete relay Nostr distribuita"
                     else -> "Due dispositivi collegati attraverso un relay cifrato"
                 }
             }
@@ -730,6 +819,29 @@ private fun OnboardingArtwork(step: Int) {
                 drawArc(Color.White, 180f, 180f, false, Offset(size.width * 0.445f, size.height * 0.34f), Size(size.width * 0.11f, size.height * 0.22f), style = Stroke(3.dp.toPx()))
                 drawCircle(Color(0xFFB8F36B), 4.dp.toPx(), Offset(size.width * 0.50f, size.height * 0.56f))
             }
+            2 -> {
+                val hub = Offset(size.width * 0.50f, size.height * 0.50f)
+                val nodes = listOf(
+                    Offset(size.width * 0.20f, size.height * 0.27f),
+                    Offset(size.width * 0.80f, size.height * 0.27f),
+                    Offset(size.width * 0.18f, size.height * 0.74f),
+                    Offset(size.width * 0.82f, size.height * 0.74f)
+                )
+                nodes.forEachIndexed { index, node ->
+                    drawLine(
+                        Brush.linearGradient(listOf(if (index % 2 == 0) green else blue, Color(0xFFB8F36B))),
+                        node,
+                        hub,
+                        2.dp.toPx(),
+                        StrokeCap.Round
+                    )
+                    drawCircle(Color(0xFF0B0E14), 15.dp.toPx(), node)
+                    drawCircle(if (index % 2 == 0) green else blue, 15.dp.toPx(), node, style = Stroke(2.dp.toPx()))
+                }
+                drawCircle(Brush.radialGradient(listOf(Color(0xFFB8F36B).copy(alpha = 0.42f), Color.Transparent)), 42.dp.toPx(), hub)
+                drawRoundRect(Color(0xFF1E2B25), hub - Offset(25.dp.toPx(), 20.dp.toPx()), Size(50.dp.toPx(), 40.dp.toPx()), CornerRadius(10.dp.toPx()))
+                drawCircle(Color(0xFFB8F36B), 5.dp.toPx(), hub)
+            }
             else -> {
                 val left = Offset(size.width * 0.19f, size.height * 0.53f)
                 val right = Offset(size.width * 0.81f, size.height * 0.53f)
@@ -754,8 +866,10 @@ private fun SettingsScreen(
     syncState: NostrSessionState,
     qualityPreference: ThemeQualityPreference,
     motionPreference: ThemeMotionPreference,
+    minerAppearances: Map<String, MinerAppearance>,
     onQualityPreference: (ThemeQualityPreference) -> Unit,
     onMotionPreference: (ThemeMotionPreference) -> Unit,
+    onMinerAppearance: (String, MinerAppearance) -> Unit,
     onConnect: (SyncConfiguration) -> Unit,
     onDisconnect: () -> Unit,
     onPublishPending: () -> Unit,
@@ -1016,11 +1130,25 @@ private fun SettingsScreen(
                                     if (isOwnedByThisDevice) onParticipantIdentity(participant.id, identityOption.id)
                                 },
                                 label = {
-                                    Text(
-                                        "${identityOption.symbol} ${identityOption.displayName}" +
-                                            if (snapshot.themeId == ThemeRegistry.WOODLAND) " · ${identityOption.contributionMaterial}" else ""
-                                    )
+                                    Text("${identityOption.symbol} ${identityOption.displayName}")
                                 }
+                            )
+                        }
+                    }
+                    if (snapshot.themeId == ThemeRegistry.MEMPOOL) {
+                        Text("Aspetto minatore", color = Muted, style = MaterialTheme.typography.labelSmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = minerAppearances[participant.id] != MinerAppearance.WOMAN,
+                                enabled = isOwnedByThisDevice,
+                                onClick = { onMinerAppearance(participant.id, MinerAppearance.MAN) },
+                                label = { Text("Uomo") }
+                            )
+                            FilterChip(
+                                selected = minerAppearances[participant.id] == MinerAppearance.WOMAN,
+                                enabled = isOwnedByThisDevice,
+                                onClick = { onMinerAppearance(participant.id, MinerAppearance.WOMAN) },
+                                label = { Text("Donna") }
                             )
                         }
                     }
@@ -1061,6 +1189,9 @@ private fun SettingsScreen(
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall
                 )
+                if (snapshot.themeId == ThemeRegistry.WOODLAND) {
+                    Text("Il primo partecipante versa noci; il secondo versa ghiande.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
                 Text("Qualità delle scene", color = Muted, style = MaterialTheme.typography.labelMedium)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(
@@ -1832,13 +1963,18 @@ private const val VISUAL_PREFERENCES = "nomisma_visual"
 private const val KEY_VISUAL_QUALITY = "quality"
 private const val KEY_VISUAL_MOTION = "motion"
 
+private fun minerAppearanceKey(participantId: String) = "miner_appearance_$participantId"
+
 @Composable
 private fun HomeScreen(
     snapshot: LedgerSnapshot,
     syncState: NostrSessionState,
     qualityPreference: ThemeQualityPreference,
     motionPreference: ThemeMotionPreference,
-    onThemeSelected: (String) -> Unit,
+    minerAppearances: Map<String, MinerAppearance>,
+    themeEvents: List<com.nomisma.app.theme.ThemeEventEnvelope>,
+    onThemeEventConsumed: (String) -> Unit,
+    onStaleThemeEvents: () -> Unit,
     onSettle: (SettlementMethod, String) -> Unit,
     onEditExpense: (Expense) -> Unit,
     onPublishPending: () -> Unit,
@@ -1899,12 +2035,15 @@ private fun HomeScreen(
             }
         }
 
-        ThemeSelector(snapshot.themeId, onThemeSelected)
         NomismaThemeScene(
             state = themeState,
             themeId = snapshot.themeId,
             qualityPreference = qualityPreference,
-            motionPreference = motionPreference
+            motionPreference = motionPreference,
+            minerAppearances = minerAppearances,
+            events = themeEvents,
+            onEventConsumed = onThemeEventConsumed,
+            onStaleEvents = onStaleThemeEvents
         )
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
