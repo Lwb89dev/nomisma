@@ -7,3 +7,7 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+ART_ASSET_SPEC.md
+IMAGEGEN_PROMPTS.md
+THEME_ANIMATION_SPEC.md
+THEME_ENGINE_PROPOSAL.md
