@@ -269,6 +269,9 @@ internal class VesselSceneController : SceneController {
         if (viewportWidth <= 0f || viewportHeight <= 0f) return
         val participantId = activeContributorId ?: return
         val fill = displayFill
+        // The neck has no room for a splash: droplets would clip through the
+        // lip and bounce on a degenerate span. The spout pour replaces them.
+        if (VesselGeometry.spillsOver(fill)) return
         val surfaceV = VesselGeometry.surfaceV(fill)
         val (leftU, rightU) = VesselGeometry.spanAtV(surfaceV)
         val fromLeft = participantId == state.participantA?.id
@@ -312,7 +315,12 @@ internal class VesselSceneController : SceneController {
         droplets.update(dt)
         val wallInset = 4f * density
         droplets.forEachActive { particle ->
-            val (leftU, rightU) = VesselGeometry.spanAtV(VesselGeometry.vAt(viewportHeight, particle.y))
+            val particleV = VesselGeometry.vAt(viewportHeight, particle.y)
+            if (viewportHeight > 0f && particleV < VesselGeometry.FILL_TOP_V) {
+                particle.active = false
+                return@forEachActive
+            }
+            val (leftU, rightU) = VesselGeometry.spanAtV(particleV)
             val left = VesselGeometry.canvasX(viewportWidth, leftU) + wallInset
             val right = VesselGeometry.canvasX(viewportWidth, rightU) - wallInset
             val hitsFloor = particle.vy > 0f && particle.y >= splashSurfaceY

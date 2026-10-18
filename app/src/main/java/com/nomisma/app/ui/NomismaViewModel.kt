@@ -87,7 +87,8 @@ class NomismaViewModel(
         notes: String,
         occurredAtMillis: Long,
         payerId: String,
-        operationAuthorId: String
+        operationAuthorId: String,
+        sharedEvenly: Boolean = true
     ) {
         mutate {
             repository.addExpense(
@@ -99,7 +100,8 @@ class NomismaViewModel(
                 notes,
                 occurredAtMillis,
                 payerId,
-                operationAuthorId
+                operationAuthorId,
+                sharedEvenly
             )
         }
     }
@@ -114,7 +116,8 @@ class NomismaViewModel(
         notes: String,
         occurredAtMillis: Long,
         payerId: String,
-        operationAuthorId: String
+        operationAuthorId: String,
+        sharedEvenly: Boolean = true
     ) {
         mutate {
             repository.updateExpense(
@@ -127,7 +130,8 @@ class NomismaViewModel(
                 notes = notes,
                 occurredAtMillis = occurredAtMillis,
                 payerId = payerId,
-                editorAuthorId = operationAuthorId
+                editorAuthorId = operationAuthorId,
+                sharedEvenly = sharedEvenly
             )
         }
     }

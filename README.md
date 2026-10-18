@@ -2,18 +2,11 @@
 
 Nomisma is an Android app for splitting and synchronizing expenses in a shared ledger. It is **local-first**: the ledger is stored on the device in SQLite, while operations can be published and received over Nostr using Amber as an external signer.
 
-Current application version: `0.1.0`.
-
-## Theme design documents
-
-- [Theme Engine Proposal](THEME_ENGINE_PROPOSAL.md)
-- [Art Asset Specification](ART_ASSET_SPEC.md)
-- [Theme Animation Specification](THEME_ANIMATION_SPEC.md)
-- [Image Generation Prompts](IMAGEGEN_PROMPTS.md)
+Current application version: `0.1.0`. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Current status
 
-The project is an advanced prototype / internal beta. The local workflow is usable; Nostr synchronization, pairing, diagnostics, and the lifecycle-safe theme event pipeline are implemented and covered by unit tests. Debug and locally signed release builds are available. There is currently no CI pipeline, production signing key, store distribution, or relay bundled with the repository.
+The project is an advanced prototype / internal beta. The local workflow is usable; Nostr synchronization, pairing, diagnostics, and the lifecycle-safe theme event pipeline are implemented and covered by unit tests. Debug builds use the Android debug key. Release builds are signed with a local release keystore that is not stored in the repository. There is currently no CI pipeline, store distribution, or relay bundled with the repository.
 
 ## Available features
 
@@ -90,7 +83,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
-The current release build is intentionally signed with the standard Android debug key for local testing. It is not suitable for Play Store or production distribution.
+`assembleRelease` signs the APK with `keystore/nomisma-release.jks`. The keystore and `keystore/keystore.properties` are gitignored. Without them the release build stops. A release-signed APK does not install over a build signed with the debug key.
 
 ## First launch
 

@@ -26,9 +26,28 @@ internal object VesselGeometry {
     /** Widest inner cross-section, used for splashes that travel the belly. */
     const val BELLY_V = 0.66f
 
-    /** Spout lip, where overflow leaves the glass. */
-    const val SPOUT_U = 0.26f
-    const val SPOUT_V = 0.10f
+    /**
+     * Spout lip on pitcher.webp (the leftmost glass around v=0.11).
+     * Overflow must leave from here and fall through the transparent
+     * margin; the old point (0.26, 0.10) sat on the mouth and painted
+     * streaks across the neck.
+     */
+    const val SPOUT_U = 0.20f
+    const val SPOUT_V = 0.11f
+
+    /** Bitmap-u the falling drop drifts left, per unit of fall progress. */
+    const val DROP_DRIFT_U = 0.045f
+
+    /** Bitmap-v the drop falls. Ends near v=0.39, still left of the belly. */
+    const val DROP_FALL_V = 0.28f
+
+    /**
+     * A surface above this v is in the opaque neck. An interior splash
+     * there is clipped to nothing, so the pour leaves by the spout instead.
+     */
+    const val NECK_V = 0.19f
+
+    private const val LIP_ROOM_V = 0.05f
 
     /**
      * Clockwise from the left lip. Tuned against pitcher.webp so the fill
@@ -80,6 +99,24 @@ internal object VesselGeometry {
         val clamped = fill.coerceIn(0f, 1f)
         val raw = FILL_BOTTOM_V - (FILL_BOTTOM_V - FILL_TOP_V) * clamped
         return raw.coerceIn(FILL_TOP_V + 0.006f, FILL_BOTTOM_V - 0.006f)
+    }
+
+    /** True when the surface has risen into the neck and a pour should exit the spout. */
+    fun spillsOver(fill: Float): Boolean = surfaceV(fill) < NECK_V
+
+    /**
+     * 1 while the surface has room for a wave and a splash, 0 when it sits
+     * on the lip. Keeps the surface stroke inside the cavity at the cap.
+     */
+    fun lipRoom(fill: Float): Float {
+        val room = surfaceV(fill) - (FILL_TOP_V + 0.006f)
+        return (room / LIP_ROOM_V).coerceIn(0f, 1f)
+    }
+
+    /** Overflow droplet at [t] in 0..1, as bitmap `(u, v)`. */
+    fun overflowDropUv(t: Float): Pair<Float, Float> {
+        val clamped = t.coerceIn(0f, 1f)
+        return (SPOUT_U - DROP_DRIFT_U * clamped) to (SPOUT_V + DROP_FALL_V * clamped)
     }
 
     fun buildCavity(path: Path, viewportWidth: Float, viewportHeight: Float): Path {

@@ -31,4 +31,23 @@ class UiTextTest {
             assertTrue(language, translatedDonation.contains("Lightning"))
         }
     }
+
+    @Test
+    fun splitToggleAndTagChartLabelsAreTranslated() {
+        val keys = listOf(
+            "Da dividere 50/50",
+            "L'importo è il totale. A credito va la metà.",
+            "L'importo è già la quota. A credito va per intero.",
+            "Quota già suddivisa",
+            "Andamento per tag",
+            "Ogni linea è un tag nel periodo selezionato",
+            "I tag con più spesa nel periodo"
+        )
+        languages.forEach { language ->
+            keys.forEach { key ->
+                assertNotEquals("$language $key", key, UiText.translate(key, language))
+            }
+        }
+        assertEquals("Da dividere 50/50", UiText.translate("Da dividere 50/50", "it"))
+    }
 }

@@ -69,7 +69,8 @@ class LocalLedgerRepository(context: Context) {
         notes: String,
         occurredAtMillis: Long,
         payerId: String,
-        operationAuthorId: String = payerId
+        operationAuthorId: String = payerId,
+        sharedEvenly: Boolean = true
     ): LedgerSnapshot = withContext(Dispatchers.IO) {
         database.insertExpense(
             amountMinor,
@@ -80,7 +81,8 @@ class LocalLedgerRepository(context: Context) {
             notes,
             occurredAtMillis,
             payerId,
-            operationAuthorId
+            operationAuthorId,
+            sharedEvenly
         )
         database.readSnapshot()
     }
@@ -95,7 +97,8 @@ class LocalLedgerRepository(context: Context) {
         notes: String,
         occurredAtMillis: Long,
         payerId: String,
-        editorAuthorId: String = payerId
+        editorAuthorId: String = payerId,
+        sharedEvenly: Boolean = true
     ): LedgerSnapshot = withContext(Dispatchers.IO) {
         database.updateExpense(
             expenseId,
@@ -107,7 +110,8 @@ class LocalLedgerRepository(context: Context) {
             notes,
             occurredAtMillis,
             payerId,
-            editorAuthorId
+            editorAuthorId,
+            sharedEvenly
         )
         database.readSnapshot()
     }
@@ -235,7 +239,7 @@ internal class NomismaDatabase(
     "nomisma.db",
     passphrase,
     null,
-    7,
+    8,
     0,
     PreserveLedgerFile(),
     null,
@@ -318,6 +322,7 @@ internal class NomismaDatabase(
                 updated_at INTEGER NOT NULL,
                 deleted_at INTEGER,
                 cycle_id TEXT NOT NULL,
+                shared_evenly INTEGER NOT NULL DEFAULT 1,
                 FOREIGN KEY(ledger_id) REFERENCES ledgers(id)
             )
             """.trimIndent()
@@ -414,6 +419,14 @@ internal class NomismaDatabase(
                 "ALTER TABLE settlement_cycles ADD COLUMN settlement_note TEXT NOT NULL DEFAULT ''"
             )
         }
+        if (oldVersion < 8) {
+            addColumnIfMissing(
+                db,
+                "expenses",
+                "shared_evenly",
+                "ALTER TABLE expenses ADD COLUMN shared_evenly INTEGER NOT NULL DEFAULT 1"
+            )
+        }
     }
 
     fun insertExpense(
@@ -425,7 +438,8 @@ internal class NomismaDatabase(
         notes: String,
         occurredAtMillis: Long,
         payerId: String,
-        operationAuthorId: String
+        operationAuthorId: String,
+        sharedEvenly: Boolean
     ) {
         ExpensePolicy.validate(amountMinor, description, merchant, notes)
         ExpensePolicy.validateOccurredAt(occurredAtMillis)
@@ -455,6 +469,7 @@ internal class NomismaDatabase(
                 put("created_at", occurredAtMillis)
                 put("updated_at", now)
                 put("cycle_id", cycleId)
+                put("shared_evenly", if (sharedEvenly) 1 else 0)
             }
             db.insertOrThrow("expenses", null, values)
 
@@ -473,6 +488,7 @@ internal class NomismaDatabase(
                 put("occurred_at_ms", occurredAtMillis)
                 put("category", categoryId)
                 put("tags", org.json.JSONArray(normalizeTags(tags)))
+                put("shared_evenly", sharedEvenly)
             }
             val operation = ContentValues().apply {
                 put("operation_id", operationId)
@@ -502,7 +518,8 @@ internal class NomismaDatabase(
         notes: String,
         occurredAtMillis: Long,
         payerId: String,
-        editorAuthorId: String
+        editorAuthorId: String,
+        sharedEvenly: Boolean
     ) {
         ExpensePolicy.validate(amountMinor, description, merchant, notes)
         ExpensePolicy.validateOccurredAt(occurredAtMillis)
@@ -530,6 +547,7 @@ internal class NomismaDatabase(
                     put("created_at", occurredAtMillis)
                     put("author_sequence", sequence)
                     put("updated_at", now)
+                    put("shared_evenly", if (sharedEvenly) 1 else 0)
                 },
                 "id = ? AND ledger_id = ?",
                 arrayOf(expenseId, ledgerId(db))
@@ -546,6 +564,7 @@ internal class NomismaDatabase(
                 put("occurred_at_ms", occurredAtMillis)
                 put("category", categoryId)
                 put("tags", JSONArray(normalizeTags(tags)))
+                put("shared_evenly", sharedEvenly)
             }
             insertLocalOperation(db, editorAuthorId, sequence, OperationType.ENTRY_UPDATE, payload, now)
             db.setTransactionSuccessful()
@@ -1127,7 +1146,8 @@ internal class NomismaDatabase(
                     },
                     cycleId = cursor.getString(cursor.getColumnIndexOrThrow("cycle_id")),
                     merchant = cursor.getString(cursor.getColumnIndexOrThrow("merchant")),
-                    notes = cursor.getString(cursor.getColumnIndexOrThrow("notes"))
+                    notes = cursor.getString(cursor.getColumnIndexOrThrow("notes")),
+                    sharedEvenly = readSharedEvenly(cursor)
                 )
             }
         }
@@ -1578,6 +1598,7 @@ internal class NomismaDatabase(
                             put("created_at", entry.occurredAtMillis)
                             put("author_sequence", operation.authorSequence)
                             put("updated_at", operation.createdAtMillis)
+                            put("shared_evenly", if (entry.sharedEvenly) 1 else 0)
                         }, "id = ?", arrayOf(entry.entryId))
                         replaceExpenseTags(db, entry.entryId, entry.tags)
                         null
@@ -1888,6 +1909,7 @@ internal class NomismaDatabase(
             put("created_at", entry.occurredAtMillis)
             put("updated_at", operation.createdAtMillis)
             put("cycle_id", entry.cycleId)
+            put("shared_evenly", if (entry.sharedEvenly) 1 else 0)
         })
 
         replaceExpenseTags(db, entry.entryId, entry.tags)
@@ -1919,7 +1941,8 @@ internal class NomismaDatabase(
             notes = payload.optString("notes").trim(),
             occurredAtMillis = payload.optLong("occurred_at_ms", fallbackOccurredAtMillis),
             categoryId = payload.getString("category").trim(),
-            tags = tags
+            tags = tags,
+            sharedEvenly = payload.optBoolean("shared_evenly", true)
         )
         require(entry.entryId.isNotBlank()) { "Entry id is empty" }
         require(entry.entryId.length <= ExpensePolicy.MAX_ENTITY_ID_LENGTH) { "Entry id is too long" }
@@ -2097,12 +2120,17 @@ internal class NomismaDatabase(
         ).use { it.moveToFirst() }
 
     private fun calculateCycleSummary(db: SQLiteDatabase, cycleId: String): CycleSummary {
-        val paidByParticipant = mutableMapOf<String, Long>()
+        val sharedByParticipant = mutableMapOf<String, Long>()
+        val quotaByParticipant = mutableMapOf<String, Long>()
         var totalMinor = 0L
         var transactionCount = 0
         db.rawQuery(
             """
-            SELECT author_id, SUM(amount_minor), COUNT(*)
+            SELECT author_id,
+                   SUM(amount_minor),
+                   SUM(CASE WHEN shared_evenly = 0 THEN 0 ELSE amount_minor END),
+                   SUM(CASE WHEN shared_evenly = 0 THEN amount_minor ELSE 0 END),
+                   COUNT(*)
             FROM expenses
             WHERE ledger_id = ? AND cycle_id = ? AND deleted_at IS NULL
             GROUP BY author_id
@@ -2110,27 +2138,35 @@ internal class NomismaDatabase(
             arrayOf(ledgerId(db), cycleId)
         ).use { cursor ->
             while (cursor.moveToNext()) {
-                val amount = cursor.getLong(1)
-                paidByParticipant[cursor.getString(0)] = amount
-                totalMinor += amount
-                transactionCount += cursor.getInt(2)
+                val authorId = cursor.getString(0)
+                sharedByParticipant[authorId] = cursor.getLong(2)
+                quotaByParticipant[authorId] = cursor.getLong(3)
+                totalMinor += cursor.getLong(1)
+                transactionCount += cursor.getInt(4)
             }
         }
         val participantIds = readParticipants(db).map(Participant::id).sorted()
         if (participantIds.size < 2) return CycleSummary(totalMinor, null, 0L, transactionCount)
         val first = participantIds[0]
         val second = participantIds[1]
-        val paidFirst = paidByParticipant[first] ?: 0L
-        val paidSecond = paidByParticipant[second] ?: 0L
-        val dueFirst = totalMinor / 2L + totalMinor % 2L
-        val dueSecond = totalMinor - dueFirst
-        val creditFirst = paidFirst - dueFirst
-        val creditSecond = paidSecond - dueSecond
+        val paidFirst = sharedByParticipant[first] ?: 0L
+        val paidSecond = sharedByParticipant[second] ?: 0L
+        val sharedTotal = paidFirst + paidSecond
+        val dueFirst = sharedTotal / 2L + sharedTotal % 2L
+        val balanceFirst = (paidFirst - dueFirst) +
+            (quotaByParticipant[first] ?: 0L) -
+            (quotaByParticipant[second] ?: 0L)
         return when {
-            creditFirst > 0L -> CycleSummary(totalMinor, first, creditFirst, transactionCount)
-            creditSecond > 0L -> CycleSummary(totalMinor, second, creditSecond, transactionCount)
+            balanceFirst > 0L -> CycleSummary(totalMinor, first, balanceFirst, transactionCount)
+            balanceFirst < 0L -> CycleSummary(totalMinor, second, -balanceFirst, transactionCount)
             else -> CycleSummary(totalMinor, null, 0L, transactionCount)
         }
+    }
+
+    private fun readSharedEvenly(cursor: android.database.Cursor): Boolean {
+        val index = cursor.getColumnIndex("shared_evenly")
+        if (index < 0 || cursor.isNull(index)) return true
+        return cursor.getInt(index) != 0
     }
 
     private fun closeCycle(
@@ -2292,7 +2328,8 @@ internal class NomismaDatabase(
         val notes: String,
         val occurredAtMillis: Long,
         val categoryId: String,
-        val tags: List<String>
+        val tags: List<String>,
+        val sharedEvenly: Boolean
     )
 
     private fun createCategoryTable(db: SQLiteDatabase) {

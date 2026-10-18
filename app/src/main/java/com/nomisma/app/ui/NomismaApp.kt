@@ -57,6 +57,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -78,6 +79,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -109,6 +111,7 @@ import com.nomisma.app.domain.TimeRangePreset
 import com.nomisma.app.domain.TagDefinition
 import com.nomisma.app.domain.SavedExpenseFilter
 import com.nomisma.app.domain.SettlementCycle
+import com.nomisma.app.domain.TagSeries
 import com.nomisma.app.domain.SettlementMethod
 import com.nomisma.app.domain.SettlementPolicy
 import com.nomisma.app.domain.SupportedCurrencies
@@ -476,7 +479,7 @@ fun NomismaApp(
             snapshot = snapshot,
             expense = null,
             onDismiss = { showAddExpense = false },
-            onSave = { amount, description, category, tags, merchant, notes, occurredAt, author ->
+            onSave = { amount, description, category, tags, merchant, notes, occurredAt, author, sharedEvenly ->
                 viewModel.addExpense(
                     amount,
                     description,
@@ -486,7 +489,8 @@ fun NomismaApp(
                     notes,
                     occurredAt,
                     author,
-                    localOperationAuthor(context, snapshot)
+                    localOperationAuthor(context, snapshot),
+                    sharedEvenly
                 )
                 showAddExpense = false
             },
@@ -499,7 +503,7 @@ fun NomismaApp(
             snapshot = snapshot,
             expense = expense,
             onDismiss = { editingExpense = null },
-            onSave = { amount, description, category, tags, merchant, notes, occurredAt, author ->
+            onSave = { amount, description, category, tags, merchant, notes, occurredAt, author, sharedEvenly ->
                 viewModel.updateExpense(
                     expense,
                     amount,
@@ -510,7 +514,8 @@ fun NomismaApp(
                     notes,
                     occurredAt,
                     author,
-                    localOperationAuthor(context, snapshot)
+                    localOperationAuthor(context, snapshot),
+                    sharedEvenly
                 )
                 editingExpense = null
             },
@@ -2638,6 +2643,7 @@ private fun InsightsScreen(snapshot: LedgerSnapshot) {
                 currency = snapshot.currency
             )
             SpendingTimeline(analytics, snapshot.currency)
+            TagTimeline(analytics, snapshot.currency)
         }
         SettlementHistory(snapshot)
         if (analytics.transactionCount > 0) {
@@ -3129,6 +3135,108 @@ private fun SpendingTimeline(analytics: AnalyticsSnapshot, currency: String) {
 }
 
 @Composable
+private fun TagTimeline(analytics: AnalyticsSnapshot, currency: String) {
+    val series = analytics.tagSeries
+    val points = analytics.spendingOverTime
+    if (series.isEmpty() || points.isEmpty()) return
+    val maxMinor = series.maxOf { line -> line.totals.maxOrNull() ?: 0L }.coerceAtLeast(1L)
+    val truncated = analytics.byTag.size > series.size
+    val chartPrefix = t("Andamento per tag")
+    val chartDescription = series.joinToString(prefix = "$chartPrefix: ", separator = "; ") { line ->
+        val amounts = line.totals.joinToString(", ") { amount -> amount.formatMinorUnits(currency) }
+        "${line.tag} $amounts"
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(chartPrefix, color = Ink, fontWeight = FontWeight.SemiBold)
+            Text(
+                t("Ogni linea è un tag nel periodo selezionato"),
+                color = Muted,
+                style = MaterialTheme.typography.labelSmall
+            )
+            if (truncated) {
+                Text(
+                    t("I tag con più spesa nel periodo"),
+                    color = Muted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            Canvas(
+                Modifier
+                    .fillMaxWidth()
+                    .height(150.dp)
+                    .semantics { contentDescription = chartDescription }
+            ) {
+                drawTagChart(series, maxMinor)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(points.first().label, color = Muted, style = MaterialTheme.typography.labelSmall)
+                Text(maxMinor.formatMinorUnits(currency), color = Muted, style = MaterialTheme.typography.labelSmall)
+                Text(points.last().label, color = Muted, style = MaterialTheme.typography.labelSmall)
+            }
+            series.forEachIndexed { index, line ->
+                TagLegendRow(line, ChartPalette[index % ChartPalette.size], currency)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TagLegendRow(line: TagSeries, color: Color, currency: String) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(8.dp).background(color, CircleShape))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            line.tag,
+            color = Muted,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f),
+            maxLines = 1
+        )
+        Text(line.totals.sum().formatMinorUnits(currency), color = Ink, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTagChart(
+    series: List<TagSeries>,
+    maxMinor: Long
+) {
+    val chartTop = 10.dp.toPx()
+    val chartBottom = size.height - 12.dp.toPx()
+    val count = series.first().totals.size
+    repeat(4) { grid ->
+        val y = chartTop + (chartBottom - chartTop) * grid / 3f
+        drawLine(Color.White.copy(alpha = 0.06f), Offset(0f, y), Offset(size.width, y), 1.dp.toPx())
+    }
+    series.forEachIndexed { seriesIndex, line ->
+        drawTagLine(line, ChartPalette[seriesIndex % ChartPalette.size], count, chartTop, chartBottom, maxMinor)
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTagLine(
+    line: TagSeries,
+    color: Color,
+    count: Int,
+    chartTop: Float,
+    chartBottom: Float,
+    maxMinor: Long
+) {
+    val path = Path()
+    line.totals.forEachIndexed { index, amount ->
+        val x = if (count == 1) size.width / 2f else size.width * index / (count - 1f)
+        val fraction = (amount.toFloat() / maxMinor.toFloat()).coerceIn(0f, 1f)
+        val y = chartBottom - (chartBottom - chartTop) * fraction
+        if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        if (count <= 14) drawCircle(color, 2.4.dp.toPx(), Offset(x, y))
+    }
+    drawPath(
+        path,
+        color,
+        style = Stroke(2.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+    )
+}
+
+@Composable
 private fun PeriodComparisonCard(comparison: PeriodComparison, currency: String) {
     val scale = maxOf(comparison.currentTotalMinor, comparison.previousTotalMinor, 1L)
     val changeColor = when {
@@ -3392,8 +3500,10 @@ private fun ExpenseRow(
             if (expense.merchant.isNotBlank()) {
                 Text(expense.merchant, color = Ink.copy(alpha = 0.78f), style = MaterialTheme.typography.bodySmall)
             }
+            val ownShare = if (expense.sharedEvenly) "" else " · ${t("Quota già suddivisa")}"
+            val tagsLabel = if (expense.tags.isEmpty()) "" else " · ${expense.tags.joinToString(" ") { "#$it" }}"
             Text(
-                "${expense.createdAtMillis.formatLocalDateTime()} · ${if (isLocked) "Ciclo chiuso · " else ""}${participant?.name ?: expense.authorId} · ${snapshot.categoryDisplayName(expense.categoryId)}${if (expense.tags.isEmpty()) "" else " · ${expense.tags.joinToString(" ") { "#$it" }}"}",
+                "${expense.createdAtMillis.formatLocalDateTime()} · ${if (isLocked) "Ciclo chiuso · " else ""}${participant?.name ?: expense.authorId} · ${snapshot.categoryDisplayName(expense.categoryId)}$ownShare$tagsLabel",
                 color = Muted,
                 style = MaterialTheme.typography.bodySmall
             )
@@ -3478,7 +3588,7 @@ private fun ExpenseEditorDialog(
     snapshot: LedgerSnapshot,
     expense: Expense?,
     onDismiss: () -> Unit,
-    onSave: (Long, String, String, List<String>, String, String, Long, String) -> Unit,
+    onSave: (Long, String, String, List<String>, String, String, Long, String, Boolean) -> Unit,
     onDelete: (() -> Unit)?
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -3502,6 +3612,7 @@ private fun ExpenseEditorDialog(
         (recent + byUsage).distinct()
     }
     var amount by rememberSaveable(expense?.id) { mutableStateOf(expense?.amountMinor?.toEditableAmount().orEmpty()) }
+    var sharedEvenly by rememberSaveable(expense?.id) { mutableStateOf(expense?.sharedEvenly ?: true) }
     var description by rememberSaveable(expense?.id) { mutableStateOf(expense?.description.orEmpty()) }
     var category by rememberSaveable(expense?.id) {
         mutableStateOf(expense?.categoryId ?: recentCategoryIds.firstOrNull() ?: snapshot.activeCategories.firstOrNull()?.id.orEmpty())
@@ -3542,6 +3653,7 @@ private fun ExpenseEditorDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedTextField(amount, { amount = it }, label = { Text(t("Importo")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                SplitEvenlyToggle(sharedEvenly) { sharedEvenly = it }
                 OutlinedTextField(
                     description,
                     { description = it.take(ExpensePolicy.MAX_DESCRIPTION_LENGTH) },
@@ -3612,8 +3724,9 @@ private fun ExpenseEditorDialog(
                         }
                         Column(Modifier.weight(1f)) {
                             Text(description.ifBlank { "Anteprima spesa" }, color = Ink, fontWeight = FontWeight.Medium)
+                            val shareLabel = if (sharedEvenly) "" else " · ${t("Quota già suddivisa")}"
                             Text(
-                                "${previewParticipant?.name.orEmpty()} · ${snapshot.categoryDisplayName(category)}",
+                                "${previewParticipant?.name.orEmpty()} · ${snapshot.categoryDisplayName(category)}$shareLabel",
                                 color = Muted,
                                 style = MaterialTheme.typography.bodySmall
                             )
@@ -3664,7 +3777,8 @@ private fun ExpenseEditorDialog(
                         merchant.trim(),
                         notes.trim(),
                         occurredAtMillis!!,
-                        author
+                        author,
+                        sharedEvenly
                     )
                     entryPreferences.record(category, normalizedTags, author)
                 }
@@ -3706,6 +3820,26 @@ private fun ExpenseEditorDialog(
                 TextButton(onClick = { showDeleteConfirmation = false }) { Text(t("Mantieni")) }
             }
         )
+    }
+}
+
+@Composable
+private fun SplitEvenlyToggle(sharedEvenly: Boolean, onChange: (Boolean) -> Unit) {
+    val detail = if (sharedEvenly) {
+        "L'importo è il totale. A credito va la metà."
+    } else {
+        "L'importo è già la quota. A credito va per intero."
+    }
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(t("Da dividere 50/50"), color = Ink, fontWeight = FontWeight.Medium)
+            Text(t(detail), color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(checked = sharedEvenly, onCheckedChange = onChange)
     }
 }
 

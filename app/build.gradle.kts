@@ -1,20 +1,29 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+// Release signing material lives in keystore/, which is gitignored.
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore/keystore.properties")
+    if (file.isFile) file.inputStream().use(::load)
 }
 
 android {
     namespace = "com.nomisma.app"
     compileSdk = 37
 
-    // Local/dev-only release signing. This is intentionally the Android debug
-    // key, so the resulting APK is not suitable for store distribution.
     signingConfigs {
-        create("debugRelease") {
-            storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+        create("release") {
+            val storeName = keystoreProperties.getProperty("storeFile")
+            if (!storeName.isNullOrBlank()) {
+                storeFile = rootProject.file("keystore/$storeName")
+            }
+            storePassword = keystoreProperties.getProperty("storePassword")
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
         }
     }
 
@@ -33,7 +42,7 @@ android {
 
     buildTypes {
         getByName("release") {
-            signingConfig = signingConfigs.getByName("debugRelease")
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
         }
     }

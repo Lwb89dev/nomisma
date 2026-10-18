@@ -72,7 +72,8 @@ data class Expense(
     val deletedAtMillis: Long? = null,
     val cycleId: String = "",
     val merchant: String = "",
-    val notes: String = ""
+    val notes: String = "",
+    val sharedEvenly: Boolean = true
 )
 
 object ExpensePolicy {
@@ -230,21 +231,25 @@ object BalanceCalculator {
 
         val first = orderedParticipants[0]
         val second = orderedParticipants[1]
-        val paidFirst = expenses.filter { it.authorId == first.id }.sumOf(Expense::amountMinor)
-        val paidSecond = expenses.filter { it.authorId == second.id }.sumOf(Expense::amountMinor)
-        val total = paidFirst + paidSecond
-
-        // The odd minor unit is assigned deterministically to the first participant.
-        val dueFirst = total / 2L + total % 2L
-        val dueSecond = total - dueFirst
-        val creditFirst = paidFirst - dueFirst
-        val creditSecond = paidSecond - dueSecond
-
+        val spent = spentBy(expenses, first.id, second.id)
+        val shared = spentBy(expenses.filter(Expense::sharedEvenly), first.id, second.id)
+        val quota = spentBy(expenses.filterNot(Expense::sharedEvenly), first.id, second.id)
+        val sharedTotal = shared.first + shared.second
+        // The odd minor unit of a shared bill stays with the first participant.
+        val dueFirst = sharedTotal / 2L + sharedTotal % 2L
+        val balanceFirst = (shared.first - dueFirst) + quota.first - quota.second
+        val paid = mapOf(first.id to spent.first, second.id to spent.second)
         return when {
-            creditFirst > 0L -> BalanceSummary(first.id, creditFirst, mapOf(first.id to paidFirst, second.id to paidSecond))
-            creditSecond > 0L -> BalanceSummary(second.id, creditSecond, mapOf(first.id to paidFirst, second.id to paidSecond))
-            else -> BalanceSummary(null, 0L, mapOf(first.id to paidFirst, second.id to paidSecond))
+            balanceFirst > 0L -> BalanceSummary(first.id, balanceFirst, paid)
+            balanceFirst < 0L -> BalanceSummary(second.id, -balanceFirst, paid)
+            else -> BalanceSummary(null, 0L, paid)
         }
+    }
+
+    private fun spentBy(expenses: List<Expense>, firstId: String, secondId: String): Pair<Long, Long> {
+        val first = expenses.filter { it.authorId == firstId }.sumOf(Expense::amountMinor)
+        val second = expenses.filter { it.authorId == secondId }.sumOf(Expense::amountMinor)
+        return first to second
     }
 }
 
@@ -387,7 +392,8 @@ data class AnalyticsSnapshot(
     val byMerchant: Map<String, Long>,
     val periodComparison: PeriodComparison?,
     val aggregationPeriod: AggregationPeriod,
-    val spendingOverTime: List<SpendingPoint>
+    val spendingOverTime: List<SpendingPoint>,
+    val tagSeries: List<TagSeries>
 )
 
 data class PeriodComparison(
@@ -407,6 +413,11 @@ data class SpendingPoint(
     val totalMinor: Long
 )
 
+data class TagSeries(
+    val tag: String,
+    val totals: List<Long>
+)
+
 object AnalyticsCalculator {
     fun calculate(
         snapshot: LedgerSnapshot,
@@ -423,6 +434,13 @@ object AnalyticsCalculator {
         val byMerchant = merchantTotals(expenses)
         val total = expenses.sumOf { it.amountMinor }
         val aggregationPeriod = aggregationPeriod(expenses, filter.dateRange, zoneId)
+        val timeline = spendingOverTime(
+            expenses = expenses,
+            period = aggregationPeriod,
+            range = filter.dateRange,
+            zoneId = zoneId,
+            nowMillis = nowMillis
+        )
         val periodComparison = previousPeriod(filter.dateRange, zoneId)?.let { previousRange ->
             val previousExpenses = snapshot.activeExpenses.filter(
                 filter.copy(dateRange = previousRange)::matches
@@ -450,13 +468,8 @@ object AnalyticsCalculator {
             byMerchant = byMerchant,
             periodComparison = periodComparison,
             aggregationPeriod = aggregationPeriod,
-            spendingOverTime = spendingOverTime(
-                expenses = expenses,
-                period = aggregationPeriod,
-                range = filter.dateRange,
-                zoneId = zoneId,
-                nowMillis = nowMillis
-            )
+            spendingOverTime = timeline,
+            tagSeries = tagSeries(expenses, timeline, aggregationPeriod, zoneId, byTag)
         )
     }
 
@@ -547,6 +560,41 @@ object AnalyticsCalculator {
     }
 
     private const val MAX_TIMELINE_POINTS = 240
+    private const val MAX_TAG_SERIES = 6
+
+    private fun tagSeries(
+        expenses: List<Expense>,
+        points: List<SpendingPoint>,
+        period: AggregationPeriod,
+        zoneId: ZoneId,
+        byTag: Map<String, Long>
+    ): List<TagSeries> {
+        if (points.isEmpty() || byTag.isEmpty()) return emptyList()
+        val selected = byTag.entries
+            .sortedWith(compareByDescending<Map.Entry<String, Long>> { it.value }.thenBy { it.key })
+            .take(MAX_TAG_SERIES)
+            .map { it.key }
+        val bucketIndex = points.withIndex().associate { (index, point) ->
+            Instant.ofEpochMilli(point.startMillis).atZone(zoneId).toLocalDate() to index
+        }
+        val totals = selected.associateWith { LongArray(points.size) }
+        expenses.forEach { expense ->
+            val index = bucketIndex[bucketStart(expense.createdAtMillis, period, zoneId)] ?: return@forEach
+            addExpenseTags(totals, expense, index)
+        }
+        return selected.map { tag -> TagSeries(tag, totals.getValue(tag).toList()) }
+    }
+
+    private fun addExpenseTags(
+        totals: Map<String, LongArray>,
+        expense: Expense,
+        index: Int
+    ) {
+        expense.tags.forEach { tag ->
+            val series = totals[tag] ?: return@forEach
+            series[index] = series[index] + expense.amountMinor
+        }
+    }
 
     private fun bucketStart(epochMillis: Long, period: AggregationPeriod, zoneId: ZoneId): LocalDate {
         val date = Instant.ofEpochMilli(epochMillis).atZone(zoneId).toLocalDate()

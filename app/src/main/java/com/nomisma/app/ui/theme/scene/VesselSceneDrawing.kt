@@ -59,6 +59,7 @@ internal fun DrawScope.drawVesselScene(frame: VesselFrame) {
     val participantBColor = state.participantB?.colorHex.sceneColor(Color(0xFF147DFF))
     val contributionGlow = sin(frame.contribution.coerceIn(0f, 1f) * PI).toFloat().coerceAtLeast(0f)
     val settlementGlow = sin(frame.settlement.coerceIn(0f, 1f) * PI).toFloat().coerceAtLeast(0f)
+    val lipRoom = VesselGeometry.lipRoom(fill)
     val impactWave = dampedWave(frame.contribution, start = 0.40f, oscillations = 4.5f, damping = 3.2f)
 
     frame.assets?.background?.let(::drawAssetCover)
@@ -139,12 +140,18 @@ internal fun DrawScope.drawVesselScene(frame: VesselFrame) {
                 liquidTop = liquidTop,
                 left = surfaceLeft,
                 right = surfaceRight,
-                impactWave = impactWave
+                impactWave = impactWave,
+                amplitudeScale = lipRoom
             )
         }
     }
 
-    if (frame.contribution > 0f) {
+    // Over the cap, once the surface is in the neck, the pour leaves by the
+    // spout. An interior splash there is clipped by the rim and looks broken.
+    val overCap = state.overflowRatio > 0f && frame.settlement == 0f
+    val spills = overCap && VesselGeometry.spillsOver(fill)
+    val dropletsAlive = (frame.droplets?.activeCount ?: 0) > 0
+    if ((frame.contribution > 0f && !spills) || dropletsAlive) {
         val pourSide = if (frame.contributingParticipantId == state.participantA?.id) -1f else 1f
         val pourU = ((surfaceLeftU + surfaceRightU) / 2f + pourSide * (surfaceRightU - surfaceLeftU) * 0.12f)
             .coerceIn(surfaceLeftU, surfaceRightU)
@@ -157,7 +164,8 @@ internal fun DrawScope.drawVesselScene(frame: VesselFrame) {
             vesselBottom = liquidBottom,
             liquidSurfaceY = if (fill > 0.01f) liquidTop else liquidBottom,
             cavityLeft = bellyLeft,
-            cavityRight = bellyRight
+            cavityRight = bellyRight,
+            spills = spills
         )
     }
 
@@ -187,7 +195,7 @@ internal fun DrawScope.drawVesselScene(frame: VesselFrame) {
         )
     }
 
-    if (state.overflowRatio > 0f && frame.settlement == 0f) {
+    if (spills) {
         drawVesselOverflow(
             state,
             frame,
@@ -274,7 +282,8 @@ private fun DrawScope.drawLiquidSurface(
     liquidTop: Float,
     left: Float,
     right: Float,
-    impactWave: Float
+    impactWave: Float,
+    amplitudeScale: Float
 ) {
     val idleAmplitude = when (frame.quality) {
         ThemeRenderQuality.LOW -> 0.8.dp.toPx()
@@ -288,8 +297,8 @@ private fun DrawScope.drawLiquidSurface(
         val t = index / segments.toFloat()
         val x = left + (right - left) * t
         val edgeDamping = sin(t * PI.toFloat()).coerceAtLeast(0f)
-        val idle = sin(t * PI.toFloat() * 3.4f + frame.ambient * PI.toFloat() * 2f) * idleAmplitude
-        val impact = sin(t * PI.toFloat() * 5f - impactWave * 2f) * impactWave * 11.dp.toPx() * edgeDamping
+        val idle = sin(t * PI.toFloat() * 3.4f + frame.ambient * PI.toFloat() * 2f) * idleAmplitude * amplitudeScale
+        val impact = sin(t * PI.toFloat() * 5f - impactWave * 2f) * impactWave * 11.dp.toPx() * edgeDamping * amplitudeScale
         val y = liquidTop + idle + impact
         if (index == 0) {
             surface.moveTo(x, y)
@@ -376,7 +385,8 @@ private fun DrawScope.drawLiquidContribution(
     vesselBottom: Float,
     liquidSurfaceY: Float,
     cavityLeft: Float,
-    cavityRight: Float
+    cavityRight: Float,
+    spills: Boolean
 ) {
     val state = frame.state ?: return
     val participantId = frame.contributingParticipantId ?: return
@@ -389,11 +399,13 @@ private fun DrawScope.drawLiquidContribution(
     val side = if (fromLeft) -1f else 1f
     val streamX = centerX + side * (cavityRight - cavityLeft) * 0.075f
     val originY = -size.height * 0.09f
-    val impact = Offset(streamX, liquidSurfaceY.coerceIn(vesselTop + 18.dp.toPx(), vesselBottom))
+    // Follow the real surface. Clamping this to the shoulder drew the hit
+    // inside the liquid once the glass passed about 80%.
+    val impact = Offset(streamX, liquidSurfaceY.coerceIn(0f, vesselBottom))
     val head = smoothStep(0.01f, 0.34f, progress)
     val tail = smoothStep(0.68f, 0.94f, progress)
     val streamFade = (1f - smoothStep(0.79f, 1f, progress)).coerceIn(0f, 1f)
-    if (head > tail && streamFade > 0f) {
+    if (!spills && head > tail && streamFade > 0f) {
         val segmentCount = if (quality == ThemeRenderQuality.HIGH) 34 else 24
         fun streamPoint(t: Float): Offset {
             val y = originY + (impact.y - originY) * t
@@ -417,6 +429,7 @@ private fun DrawScope.drawLiquidContribution(
 
     if (progress > 0.29f) {
         val splashTime = ((progress - 0.29f) / 0.60f).coerceIn(0f, 1f)
+        val splashScale = VesselGeometry.lipRoom(frame.fill)
         clipPath(cavity) {
             // Droplets are simulated by the controller (gravity + restitution);
             // here we only render the live pool.
@@ -430,42 +443,66 @@ private fun DrawScope.drawLiquidContribution(
                     alpha = fade * (0.54f + pseudo(particle.seed, 0.46f) * 0.42f)
                 )
             }
+            if (spills || splashScale <= 0f) return@clipPath
             repeat(3) { ring ->
                 val ringProgress = (splashTime * 1.45f - ring * 0.17f).coerceIn(0f, 1f)
-                if (ringProgress > 0f) {
-                    val ringWidth = (24 + ring * 10).dp.toPx() * ringProgress
-                    val ringHeight = (4.5f + ring * 1.2f).dp.toPx() * ringProgress
-                    drawOval(
-                        color = color.copy(alpha = (1f - ringProgress) * 0.46f),
-                        topLeft = impact - Offset(ringWidth / 2f, ringHeight / 2f),
-                        size = Size(ringWidth, ringHeight),
-                        style = Stroke((1.4f - ring * 0.18f).dp.toPx())
-                    )
-                }
+                if (ringProgress <= 0f) return@repeat
+                val ringWidth = (24 + ring * 10).dp.toPx() * ringProgress
+                val ringHeight = (4.5f + ring * 1.2f).dp.toPx() * ringProgress
+                drawOval(
+                    color = color.copy(alpha = (1f - ringProgress) * 0.46f * splashScale),
+                    topLeft = impact - Offset(ringWidth / 2f, ringHeight / 2f),
+                    size = Size(ringWidth, ringHeight),
+                    style = Stroke((1.4f - ring * 0.18f).dp.toPx())
+                )
             }
-            val wetEnvelope = sin(splashTime * PI.toFloat()).coerceAtLeast(0f)
+            val wetEnvelope = sin(splashTime * PI.toFloat()).coerceAtLeast(0f) * splashScale
             repeat(if (quality == ThemeRenderQuality.HIGH) 10 else 6) { index ->
-                val onLeft = index % 2 == 0
-                val wallX = if (onLeft) cavityLeft else cavityRight
-                val inset = (5f + pseudo(index xor eventSeed, 0.28f) * 12f).dp.toPx()
-                val x = wallX + if (onLeft) inset else -inset
-                val startY = vesselTop + (34f + pseudo(index, 0.61f) * 96f).dp.toPx()
-                val length = (18f + pseudo(index, 0.76f) * 48f).dp.toPx() * wetEnvelope
-                val streak = frame.scratchPath.apply {
-                    rewind()
-                    moveTo(x, startY)
-                    cubicTo(
-                        x + (if (onLeft) 1f else -1f) * 5.dp.toPx(), startY + length * 0.30f,
-                        x - (if (onLeft) 1f else -1f) * 3.dp.toPx(), startY + length * 0.70f,
-                        x, startY + length
-                    )
-                }
-                drawPath(streak, color.copy(alpha = 0.23f * wetEnvelope), style = Stroke(2.1.dp.toPx(), cap = StrokeCap.Round))
-                drawPath(streak, Color.White.copy(alpha = 0.20f * wetEnvelope), style = Stroke(0.65.dp.toPx(), cap = StrokeCap.Round))
-                drawCircle(color.copy(alpha = 0.52f * wetEnvelope), (1.2f + pseudo(index, 0.19f) * 1.6f).dp.toPx(), Offset(x, startY + length))
+                drawWallStreak(
+                    frame = frame,
+                    index = index,
+                    eventSeed = eventSeed,
+                    color = color,
+                    cavityLeft = cavityLeft,
+                    cavityRight = cavityRight,
+                    vesselTop = vesselTop,
+                    wetEnvelope = wetEnvelope
+                )
             }
         }
     }
+}
+
+private fun DrawScope.drawWallStreak(
+    frame: VesselFrame,
+    index: Int,
+    eventSeed: Int,
+    color: Color,
+    cavityLeft: Float,
+    cavityRight: Float,
+    vesselTop: Float,
+    wetEnvelope: Float
+) {
+    if (wetEnvelope <= 0f) return
+    val onLeft = index % 2 == 0
+    val wallX = if (onLeft) cavityLeft else cavityRight
+    val inset = (5f + pseudo(index xor eventSeed, 0.28f) * 12f).dp.toPx()
+    val x = wallX + if (onLeft) inset else -inset
+    val startY = vesselTop + (34f + pseudo(index, 0.61f) * 96f).dp.toPx()
+    val length = (18f + pseudo(index, 0.76f) * 48f).dp.toPx() * wetEnvelope
+    val side = if (onLeft) 1f else -1f
+    val streak = frame.scratchPath.apply {
+        rewind()
+        moveTo(x, startY)
+        cubicTo(
+            x + side * 5.dp.toPx(), startY + length * 0.30f,
+            x - side * 3.dp.toPx(), startY + length * 0.70f,
+            x, startY + length
+        )
+    }
+    drawPath(streak, color.copy(alpha = 0.23f * wetEnvelope), style = Stroke(2.1.dp.toPx(), cap = StrokeCap.Round))
+    drawPath(streak, Color.White.copy(alpha = 0.20f * wetEnvelope), style = Stroke(0.65.dp.toPx(), cap = StrokeCap.Round))
+    drawCircle(color.copy(alpha = 0.52f * wetEnvelope), (1.2f + pseudo(index, 0.19f) * 1.6f).dp.toPx(), Offset(x, startY + length))
 }
 
 private fun DrawScope.drawWaterDroplet(
@@ -502,22 +539,65 @@ private fun DrawScope.drawVesselOverflow(
     frame: VesselFrame,
     colorA: Color,
     colorB: Color,
-    centerX: Float,
-    top: Float
+    spoutX: Float,
+    spoutY: Float
 ) {
-    val total = state.participantAContributionMinor + state.participantBContributionMinor
-    val mixRatio = if (total == 0L) 0.5f else state.participantBContributionMinor.toFloat() / total.toFloat()
-    val overflowColor = lerp(colorA, colorB, mixRatio)
-    val pulse = 0.5f + sin(frame.ambient * PI.toFloat() * 2f) * 0.5f
+    val pouring = frame.contribution > 0.02f && frame.contributingParticipantId != null
+    val color = if (pouring && frame.contributingParticipantId == state.participantA?.id) {
+        colorA
+    } else if (pouring) {
+        colorB
+    } else {
+        val total = state.participantAContributionMinor + state.participantBContributionMinor
+        val mix = if (total == 0L) 0.5f else state.participantBContributionMinor.toFloat() / total.toFloat()
+        lerp(colorA, colorB, mix)
+    }
+    if (pouring) drawSpoutStream(frame, color, spoutX, spoutY)
+    val bead = if (pouring) 16f else 11f
     drawOval(
-        Brush.horizontalGradient(listOf(colorA, overflowColor, colorB)),
-        Offset(centerX - size.width * 0.11f, top - 2.dp.toPx()),
-        Size(size.width * 0.22f, 8.dp.toPx())
+        color.copy(alpha = if (pouring) 0.88f else 0.6f),
+        Offset(spoutX - bead.dp.toPx() * 0.72f, spoutY - 2.dp.toPx()),
+        Size(bead.dp.toPx(), 4.5f.dp.toPx())
     )
+    val cycles = if (pouring) 7f else 3f
     repeat(3) { index ->
-        val x = centerX + (index - 1) * 16.dp.toPx()
-        val length = (12 + index * 8).dp.toPx() * (0.65f + pulse * 0.35f)
-        drawLine(overflowColor.copy(alpha = 0.74f), Offset(x, top + 1.dp.toPx()), Offset(x + (index - 1) * 3.dp.toPx(), top + length), 3.dp.toPx(), StrokeCap.Round)
-        drawCircle(overflowColor.copy(alpha = 0.82f), 3.dp.toPx(), Offset(x + (index - 1) * 3.dp.toPx(), top + length + 2.dp.toPx()))
+        val t = (frame.ambient * cycles + index / 3f) % 1f
+        val fade = sin(t * PI.toFloat()).coerceAtLeast(0f)
+        if (fade <= 0f) return@repeat
+        val (u, v) = VesselGeometry.overflowDropUv(t)
+        drawCircle(
+            color.copy(alpha = 0.84f * fade),
+            (1.5f + (1f - t) * 1.6f).dp.toPx(),
+            Offset(VesselGeometry.canvasX(size.width, u), VesselGeometry.canvasY(size.height, v))
+        )
+    }
+}
+
+/** Pour aimed at the spout lip, drawn in front of the pitcher so the neck cannot hide it. */
+private fun DrawScope.drawSpoutStream(frame: VesselFrame, color: Color, spoutX: Float, spoutY: Float) {
+    val progress = frame.contribution
+    val head = smoothStep(0.01f, 0.34f, progress)
+    val tail = smoothStep(0.68f, 0.94f, progress)
+    val fade = (1f - smoothStep(0.79f, 1f, progress)).coerceIn(0f, 1f)
+    if (head <= tail || fade <= 0f) return
+    val originX = spoutX + 12.dp.toPx()
+    val originY = -size.height * 0.06f
+    val count = if (frame.quality == ThemeRenderQuality.HIGH) 24 else 16
+    fun point(t: Float): Offset {
+        val wobble = sin(t * 18f + progress * 16f + frame.eventSeed * 0.001f) * sin(t * PI.toFloat()) * 1.2f.dp.toPx()
+        return Offset(
+            originX + (spoutX - originX) * t + wobble,
+            originY + (spoutY - originY) * t
+        )
+    }
+    var previous = point(tail)
+    for (index in 1..count) {
+        val t = tail + (head - tail) * (index / count.toFloat())
+        val current = point(t)
+        val body = sin((index / count.toFloat()) * PI.toFloat()).coerceAtLeast(0f)
+        val width = (2.2f + body * 2.4f) * fade
+        drawLine(color.copy(alpha = 0.14f * fade), previous, current, (width + 5f).dp.toPx(), StrokeCap.Round)
+        drawLine(color.copy(alpha = 0.78f * fade), previous, current, width.dp.toPx(), StrokeCap.Round)
+        previous = current
     }
 }

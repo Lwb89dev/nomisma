@@ -185,6 +185,93 @@ class FinanceModelsTest {
     }
 
     @Test
+    fun personalShareStaysOutOfTheSplitButCountsInVolumeAndTags() {
+        fun at(date: LocalDate) = date.atStartOfDay(zone).toInstant().toEpochMilli()
+        val first = LocalDate.of(2026, 10, 1)
+        val second = LocalDate.of(2026, 10, 2)
+        val third = LocalDate.of(2026, 10, 3)
+        val household = snapshot(
+            listOf(
+                expense(id = "shared", amount = 10_000L, authorId = "alice", createdAt = at(first), tags = listOf("supermercato")),
+                expense(id = "own", amount = 2_000L, authorId = "alice", createdAt = at(first), tags = listOf("supermercato"), sharedEvenly = false),
+                expense(id = "bob-own", amount = 4_000L, authorId = "bob", createdAt = at(third), tags = listOf("supermercato", "casa"), sharedEvenly = false)
+            )
+        )
+        val range = DateRange(at(first), at(third.plusDays(1)) - 1L)
+        val analytics = AnalyticsCalculator.calculate(
+            snapshot = household,
+            filter = ExpenseFilter(dateRange = range),
+            zoneId = zone,
+            nowMillis = at(third) + 12 * 60 * 60 * 1_000L
+        )
+
+        assertEquals(16_000L, analytics.totalMinor)
+        assertEquals(16_000L, household.cycleVolumeMinor)
+        assertEquals(12_000L, household.contributionFor("alice"))
+        assertEquals(4_000L, household.contributionFor("bob"))
+        assertEquals("alice", analytics.filteredBalance.creditorId)
+        assertEquals(3_000L, analytics.filteredBalance.amountMinor)
+        assertEquals(mapOf("alice" to 12_000L, "bob" to 4_000L), analytics.filteredBalance.paidByParticipant)
+        assertEquals(mapOf("supermercato" to 16_000L, "casa" to 4_000L), analytics.byTag)
+        assertEquals(listOf("supermercato", "casa"), analytics.tagSeries.map(TagSeries::tag))
+        assertEquals(listOf(12_000L, 0L, 4_000L), analytics.tagSeries.first { it.tag == "supermercato" }.totals)
+        assertEquals(listOf(0L, 0L, 4_000L), analytics.tagSeries.first { it.tag == "casa" }.totals)
+        assertEquals(analytics.spendingOverTime.size, analytics.tagSeries.first().totals.size)
+        assertEquals(at(second), analytics.spendingOverTime[1].startMillis)
+    }
+
+    @Test
+    fun sharedBillCreditsHalfAndAlreadyDividedQuotaCreditsTheFullAmount() {
+        val shared = snapshot(listOf(expense(id = "shared", amount = 5_000L, authorId = "alice")))
+        val quota = snapshot(listOf(expense(id = "quota", amount = 5_000L, authorId = "alice", sharedEvenly = false)))
+        val otherPaid = snapshot(listOf(expense(id = "bob", amount = 5_000L, authorId = "bob")))
+        val uneven = snapshot(
+            listOf(
+                expense(id = "alice-share", amount = 7_000L, authorId = "alice", sharedEvenly = false),
+                expense(id = "bob-share", amount = 3_000L, authorId = "bob", sharedEvenly = false)
+            )
+        )
+        val even = snapshot(
+            listOf(
+                expense(id = "alice-share", amount = 4_000L, authorId = "alice", sharedEvenly = false),
+                expense(id = "bob-share", amount = 4_000L, authorId = "bob", sharedEvenly = false)
+            )
+        )
+        val oddCent = snapshot(listOf(expense(id = "odd", amount = 101L, authorId = "alice")))
+
+        assertEquals("alice", shared.balance().creditorId)
+        assertEquals(2_500L, shared.balance().amountMinor)
+        assertEquals("alice", quota.balance().creditorId)
+        assertEquals(5_000L, quota.balance().amountMinor)
+        assertEquals("bob", otherPaid.balance().creditorId)
+        assertEquals(2_500L, otherPaid.balance().amountMinor)
+        assertEquals("alice", uneven.balance().creditorId)
+        assertEquals(4_000L, uneven.balance().amountMinor)
+        assertEquals(10_000L, AnalyticsCalculator.calculate(uneven, zoneId = zone).totalMinor)
+        assertEquals(null, even.balance().creditorId)
+        assertEquals("alice", oddCent.balance().creditorId)
+        assertEquals(50L, oddCent.balance().amountMinor)
+    }
+
+    @Test
+    fun tagTimelineKeepsOnlyTheLargestSeries() {
+        val expenses = (1..7).map { index ->
+            expense(
+                id = "tag-$index",
+                amount = index * 100L,
+                tags = listOf("tag-$index"),
+                createdAt = 1_700_000_000_000L
+            )
+        }
+        val analytics = AnalyticsCalculator.calculate(snapshot(expenses), zoneId = zone)
+
+        assertEquals(7, analytics.byTag.size)
+        assertEquals(6, analytics.tagSeries.size)
+        assertEquals("tag-7", analytics.tagSeries.first().tag)
+        assertFalse(analytics.tagSeries.any { it.tag == "tag-1" })
+    }
+
+    @Test
     fun settlementMetadataUsesStableWireValuesAndBoundedNotes() {
         assertEquals(SettlementMethod.BANK_TRANSFER, SettlementMethod.fromWire("bank_transfer"))
         assertEquals(SettlementMethod.LIGHTNING, SettlementMethod.fromWire("lightning"))
@@ -441,7 +528,8 @@ class FinanceModelsTest {
         createdAt: Long = 1_000L,
         deletedAt: Long? = null,
         cycleId: String = "",
-        authorId: String = "alice"
+        authorId: String = "alice",
+        sharedEvenly: Boolean = true
     ) = Expense(
         id = id,
         ledgerId = "ledger",
@@ -453,7 +541,8 @@ class FinanceModelsTest {
         tags = tags,
         createdAtMillis = createdAt,
         deletedAtMillis = deletedAt,
-        cycleId = cycleId
+        cycleId = cycleId,
+        sharedEvenly = sharedEvenly
     )
 
     private fun snapshot(
