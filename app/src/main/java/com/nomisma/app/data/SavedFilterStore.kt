@@ -2,6 +2,7 @@ package com.nomisma.app.data
 
 import android.content.Context
 import com.nomisma.app.domain.SavedExpenseFilter
+import com.nomisma.app.security.securePreferences
 import com.nomisma.app.domain.ExpenseFilterDraft
 import com.nomisma.app.domain.TimeRangePreset
 import org.json.JSONArray
@@ -9,7 +10,7 @@ import org.json.JSONObject
 
 class SavedFilterStore(context: Context) {
     private val preferences = context.applicationContext
-        .getSharedPreferences("nomisma_saved_filters", Context.MODE_PRIVATE)
+        .securePreferences("nomisma_saved_filters")
 
     fun load(): List<SavedExpenseFilter> {
         val raw = preferences.getString(KEY_FILTERS, null) ?: return emptyList()

@@ -65,8 +65,6 @@ internal class VesselSceneController : SceneController {
 
     // Collision geometry captured when a splash spawns (pixels).
     private var splashSurfaceY = 0f
-    private var splashLeft = 0f
-    private var splashRight = 0f
 
     init {
         engine.add(MotionEngine.Simulatable { dt -> fillSpring.step(dt) })
@@ -271,21 +269,16 @@ internal class VesselSceneController : SceneController {
         if (viewportWidth <= 0f || viewportHeight <= 0f) return
         val participantId = activeContributorId ?: return
         val fill = displayFill
-        val top = viewportHeight * 0.125f
-        val bottom = viewportHeight * 0.875f
-        val bodyLeft = viewportWidth * 0.145f
-        val bodyRight = viewportWidth * 0.665f
-        val centerX = viewportWidth * 0.405f
-        val liquidBottom = bottom - 5f * density
-        val liquidHeight = (bottom - top) * 0.84f * fill.coerceIn(0f, 1f)
-        val surfaceY = if (fill > 0.01f) liquidBottom - liquidHeight else liquidBottom
+        val surfaceV = VesselGeometry.surfaceV(fill)
+        val (leftU, rightU) = VesselGeometry.spanAtV(surfaceV)
         val fromLeft = participantId == state.participantA?.id
         val side = if (fromLeft) -1f else 1f
-        val impactX = centerX + side * (bodyRight - bodyLeft) * 0.075f
-        val impactY = surfaceY.coerceIn(top + 18f * density, liquidBottom)
-        splashSurfaceY = impactY
-        splashLeft = bodyLeft
-        splashRight = bodyRight
+        val pourU = ((leftU + rightU) / 2f + side * (rightU - leftU) * 0.12f).coerceIn(leftU, rightU)
+        val surfaceY = VesselGeometry.canvasY(viewportHeight, surfaceV)
+        val floorY = VesselGeometry.canvasY(viewportHeight, VesselGeometry.FILL_BOTTOM_V)
+        splashSurfaceY = if (fill > 0.01f) surfaceY else floorY
+        val impactX = VesselGeometry.canvasX(viewportWidth, pourU)
+        val impactY = splashSurfaceY
         val dropCount = when (environment.quality) {
             ThemeRenderQuality.LOW -> 14
             ThemeRenderQuality.MEDIUM -> 23
@@ -318,12 +311,15 @@ internal class VesselSceneController : SceneController {
         if (droplets.activeCount <= 0) return
         droplets.update(dt)
         val wallInset = 4f * density
-        val left = splashLeft + wallInset
-        val right = splashRight - wallInset
         droplets.forEachActive { particle ->
+            val (leftU, rightU) = VesselGeometry.spanAtV(VesselGeometry.vAt(viewportHeight, particle.y))
+            val left = VesselGeometry.canvasX(viewportWidth, leftU) + wallInset
+            val right = VesselGeometry.canvasX(viewportWidth, rightU) - wallInset
             val hitsFloor = particle.vy > 0f && particle.y >= splashSurfaceY
-            val hitsWall = (particle.x < left && particle.vx < 0f) ||
-                (particle.x > right && particle.vx > 0f)
+            val hitsWall = right > left && (
+                (particle.x < left && particle.vx < 0f) ||
+                    (particle.x > right && particle.vx > 0f)
+                )
             if (!hitsFloor && !hitsWall) return@forEachActive
             val body = dropletScratchBody
             body.position = Vec2(particle.x, particle.y)

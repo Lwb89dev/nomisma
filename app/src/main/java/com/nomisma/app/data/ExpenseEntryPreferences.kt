@@ -1,6 +1,7 @@
 package com.nomisma.app.data
 
 import android.content.Context
+import com.nomisma.app.security.securePreferences
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -35,7 +36,7 @@ object ExpenseEntryRecentsPolicy {
 
 class ExpenseEntryPreferences(context: Context) {
     private val preferences = context.applicationContext
-        .getSharedPreferences("nomisma_expense_entry", Context.MODE_PRIVATE)
+        .securePreferences("nomisma_expense_entry")
 
     fun load(): ExpenseEntryRecents {
         val raw = preferences.getString(KEY_RECENTS, null) ?: return ExpenseEntryRecents()

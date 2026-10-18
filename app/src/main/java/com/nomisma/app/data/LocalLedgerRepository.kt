@@ -2,8 +2,9 @@ package com.nomisma.app.data
 
 import android.content.ContentValues
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteOpenHelper
+import net.zetetic.database.DatabaseErrorHandler
+import net.zetetic.database.sqlcipher.SQLiteDatabase
+import net.zetetic.database.sqlcipher.SQLiteOpenHelper
 import com.nomisma.app.domain.Expense
 import com.nomisma.app.domain.ExpenseCategory
 import com.nomisma.app.domain.ExpenseCategories
@@ -53,7 +54,7 @@ data class OperationStats(
 )
 
 class LocalLedgerRepository(context: Context) {
-    private val database = NomismaDatabase(context.applicationContext)
+    private val database = openEncryptedLedger(context.applicationContext)
 
     suspend fun loadSnapshot(): LedgerSnapshot = withContext(Dispatchers.IO) {
         database.readSnapshot()
@@ -226,11 +227,19 @@ class LocalLedgerRepository(context: Context) {
     }
 }
 
-private class NomismaDatabase(context: Context) : SQLiteOpenHelper(
-    context,
+internal class NomismaDatabase(
+    context: Context,
+    passphrase: ByteArray
+) : SQLiteOpenHelper(
+    context.applicationContext,
     "nomisma.db",
+    passphrase,
     null,
-    7
+    7,
+    0,
+    PreserveLedgerFile(),
+    null,
+    false
 ) {
     private var cachedLedgerId: String? = null
 
@@ -2451,4 +2460,12 @@ private class NomismaDatabase(context: Context) : SQLiteOpenHelper(
     companion object {
         private const val INITIAL_CYCLE_ID = "cycle-initial"
     }
+}
+
+/** A bad key or a torn write must not delete the ledger file. */
+private class PreserveLedgerFile : DatabaseErrorHandler {
+    override fun onCorruption(
+        db: SQLiteDatabase,
+        exception: android.database.sqlite.SQLiteException
+    ) = Unit
 }

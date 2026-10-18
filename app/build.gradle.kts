@@ -55,6 +55,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.24.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.79")
+    implementation("net.zetetic:sqlcipher-android:4.19.1")
+    implementation("androidx.sqlite:sqlite:2.7.0")
 
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.compose.foundation:foundation")

@@ -446,11 +446,16 @@ private fun DrawScope.drawMineCart(
     val cartAsset = frame.assets?.mineCart
     if (cartAsset != null) {
         drawAssetInRect(cartAsset, left + shake, top, width, height)
+        // Opening of cart.webp: the bin mouth, not the front plate.
+        val mouthLeft = left + width * 0.18f + shake
+        val mouthRight = left + width * 0.82f + shake
+        val mouthTop = top + height * 0.09f
+        val mouthBottom = top + height * 0.19f
         val cavity = Path().apply {
-            moveTo(left + width * 0.14f + shake, top + height * 0.12f)
-            lineTo(left + width * 0.86f + shake, top + height * 0.12f)
-            lineTo(left + width * 0.73f + shake, top + height * 0.46f)
-            lineTo(left + width * 0.27f + shake, top + height * 0.46f)
+            moveTo(mouthLeft, mouthTop)
+            lineTo(mouthRight, mouthTop)
+            lineTo(left + width * 0.86f + shake, mouthBottom)
+            lineTo(left + width * 0.14f + shake, mouthBottom)
             close()
         }
         val maxBlocks = when (frame.quality) {
@@ -461,15 +466,15 @@ private fun DrawScope.drawMineCart(
         val visible = (maxBlocks * fill).roundToInt().coerceIn(0, maxBlocks)
         val total = state.participantAContributionMinor + state.participantBContributionMinor
         val ratioA = if (total == 0L) 0.5f else state.participantAContributionMinor.toFloat() / total.toFloat()
+        val columns = 6
+        val blockWidth = (mouthRight - mouthLeft) / columns * 0.78f
+        val blockHeight = (mouthBottom - mouthTop) / 2.2f
         clipPath(cavity) {
             repeat(visible) { index ->
-                val columns = 6
                 val row = index / columns
                 val column = index % columns
-                val blockWidth = width * 0.09f
-                val blockHeight = height * 0.075f
-                val x = left + width * 0.225f + column * width * 0.095f + shake
-                val y = top + height * 0.43f - (row + 1) * blockHeight * 0.88f
+                val x = mouthLeft + (mouthRight - mouthLeft) * ((column + 0.5f) / columns) - blockWidth / 2f
+                val y = mouthBottom - (row + 1) * blockHeight * 0.92f
                 val ownerColor = if (index.toFloat() / maxBlocks < ratioA) {
                     state.participantA?.colorHex.sceneColor(Color(0xFF38E66B))
                 } else {
@@ -488,13 +493,6 @@ private fun DrawScope.drawMineCart(
                 drawLine(Color.White.copy(alpha = 0.34f), Offset(x + 1.5.dp.toPx(), y + 1.5.dp.toPx()), Offset(x + blockWidth * 0.64f, y + 1.5.dp.toPx()), 0.6.dp.toPx())
             }
         }
-        drawLine(
-            Brush.horizontalGradient(listOf(Color(0xFF242629), Color(0xFFC4B8A5), Color(0xFF27292C))),
-            Offset(left + width * 0.10f + shake, top + height * 0.115f),
-            Offset(left + width * 0.90f + shake, top + height * 0.115f),
-            3.dp.toPx(),
-            StrokeCap.Round
-        )
         return
     }
 

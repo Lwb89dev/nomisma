@@ -72,6 +72,18 @@ class NostrOperationPublisher(
         require(seal.tags.isEmpty()) { "NIP-59 seals must not contain tags" }
 
         val ephemeralPrivateKey = newPrivateKey()
+        try {
+            return publishWrappedSeal(seal, recipientPubkey, ephemeralPrivateKey)
+        } finally {
+            ephemeralPrivateKey.fill(0)
+        }
+    }
+
+    private suspend fun publishWrappedSeal(
+        seal: NostrEvent,
+        recipientPubkey: String,
+        ephemeralPrivateKey: ByteArray
+    ): NostrEvent {
         val ephemeralPubkey = NostrHex.encode(
             Secp256k1Jni.pubkeyCreate(ephemeralPrivateKey).copyOfRange(1, 33)
         )
@@ -120,6 +132,7 @@ class NostrOperationPublisher(
         while (true) {
             val key = randomBytes(32)
             if (Secp256k1Jni.secKeyVerify(key)) return key
+            key.fill(0)
         }
     }
 

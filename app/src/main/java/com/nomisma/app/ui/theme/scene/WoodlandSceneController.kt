@@ -413,8 +413,9 @@ internal class WoodlandSceneController : SceneController {
         val height = viewportHeight
         val originX = if (fromLeft) width * 0.20f else width * 0.80f
         val originY = height * 0.48f + index * 0.0075f * height
+        // Front window of the log (chest at y 0.45, height 0.34, opening centered near 0.51).
         val targetX = width * 0.50f
-        val targetY = height * 0.465f
+        val targetY = height * (0.45f + 0.34f * 0.51f)
         val gravity = TOKEN_GRAVITY_HEIGHTS * height
         val flight = TOKEN_FLIGHT_SECONDS
         token.body.position = Vec2(originX, originY)

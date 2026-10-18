@@ -3,17 +3,20 @@ package com.nomisma.app.ui.theme
 import android.animation.ValueAnimator
 import android.app.ActivityManager
 import android.content.Context
+import android.content.res.Configuration
 import android.os.PowerManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -47,6 +51,7 @@ import com.nomisma.app.theme.ThemeEventEnvelope
 import com.nomisma.app.theme.ThemeFinancialState
 import com.nomisma.app.theme.ThemeIdentityRegistry
 import com.nomisma.app.theme.ThemeRegistry
+import com.nomisma.app.ui.l10n.UiText
 import com.nomisma.app.ui.theme.scene.SceneControllerFactory
 import com.nomisma.app.ui.theme.scene.SceneEnvironment
 import com.nomisma.app.ui.theme.scene.sceneColor
@@ -183,23 +188,47 @@ fun NomismaThemeScene(
 
     val displayFillValue = displayFill.floatValue
     val sceneShape = RoundedCornerShape(32.dp)
+    val configuration = LocalConfiguration.current
+    // The scene art is composed for a portrait card (~371 x 400 dp). In
+    // landscape that card is taller than the screen, so the pitcher was
+    // cropped and stretched. Cap the height and keep the same aspect.
+    val sceneAspect = 371f / 400f
+    val maxSceneHeight = if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+        (configuration.screenHeightDp * 0.62f).dp
+    } else {
+        400.dp
+    }
 
+    BoxWithConstraints(
+        modifier = modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center
+    ) {
+    val sceneWidth = if (maxWidth / sceneAspect <= maxSceneHeight) maxWidth else maxSceneHeight * sceneAspect
+    val sceneHeight = sceneWidth / sceneAspect
+    val sceneLanguage = configuration.locales[0].language
+    val themeName = ThemeRegistry.definitions().firstOrNull { it.id == themeId }?.displayName ?: "Vessel"
+    val sceneDescription = buildString {
+        append(UiText.translate("Visualizzazione", sceneLanguage))
+        append(" ")
+        append(themeName)
+        append(", ")
+        append(UiText.translate("ciclo al", sceneLanguage))
+        append(" ")
+        append((displayFillValue * 100).roundToInt())
+        append(" ")
+        append(UiText.translate("per cento", sceneLanguage))
+        if (state.overflowRatio > 0f) {
+            append(", ")
+            append(UiText.translate("soglia superata", sceneLanguage))
+        }
+    }
     Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(400.dp)
+        modifier = Modifier
+            .width(sceneWidth)
+            .height(sceneHeight)
             .clip(sceneShape)
             .background(Color(0xFF080A0E))
-            .semantics {
-                contentDescription = buildString {
-                    append("Visualizzazione ")
-                    append(ThemeRegistry.definitions().firstOrNull { it.id == themeId }?.displayName ?: "Vessel")
-                    append(", ciclo al ")
-                    append((displayFillValue * 100).roundToInt())
-                    append(" per cento")
-                    if (state.overflowRatio > 0f) append(", soglia superata")
-                }
-            }
+            .semantics { contentDescription = sceneDescription }
     ) {
         Canvas(
             Modifier
@@ -281,6 +310,7 @@ fun NomismaThemeScene(
                 modifier = Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 14.dp)
             )
         }
+    }
     }
 }
 

@@ -380,7 +380,9 @@ internal class MempoolSceneController : SceneController {
         blockOriginX = viewportWidth * (if (fromLeft) 0.22f else 0.78f)
         blockOriginY = viewportHeight * 0.47f
         blockTargetX = viewportWidth * 0.5f
-        blockBedY = viewportHeight * 0.45f + 5f * density
+        // Cart rect starts at 0.45 of the scene and is 0.32 tall. The bin mouth's
+        // inner lip — where a block actually comes to rest — is about 17% down that rect.
+        blockBedY = viewportHeight * (0.45f + 0.32f * 0.17f)
         block.position = Vec2(blockOriginX, blockOriginY)
         block.velocity = Vec2.Zero
         block.gravity = 0f

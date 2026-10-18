@@ -1,9 +1,11 @@
 package com.nomisma.app.ui
 
+import android.app.Activity
 import android.content.Context
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -66,6 +68,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
@@ -86,6 +89,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nomisma.app.data.LocalLedgerRepository
+import com.nomisma.app.security.securePreferences
+import com.nomisma.app.ui.l10n.UiText
 import com.nomisma.app.data.ExpenseEntryPreferences
 import com.nomisma.app.data.SavedFilterStore
 import com.nomisma.app.domain.AnalyticsSnapshot
@@ -145,6 +150,7 @@ private val PanelLight = Color(0xFF202634)
 private val Ink = Color(0xFFF4F6FA)
 private val Muted = Color(0xFF9BA5B7)
 private const val DEFAULT_RELAY_URL = "wss://relay.damus.io"
+private const val LIGHTNING_ADDRESS = "lwb89@blink.sv"
 private const val APP_PREFERENCES = "nomisma_app"
 private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete_v1"
 
@@ -163,7 +169,14 @@ fun NomismaApp(
     onIncomingPairingCodeConsumed: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val repository = remember { LocalLedgerRepository(context.applicationContext) }
+    val repositoryResult = remember {
+        runCatching { LocalLedgerRepository(context.applicationContext) }
+    }
+    val repository = repositoryResult.getOrNull()
+    if (repository == null) {
+        NomismaTheme { LedgerOpenError() }
+        return
+    }
     val viewModel: NomismaViewModel = viewModel(factory = NomismaViewModel.Factory(repository, signer))
     val snapshot by viewModel.snapshot.collectAsStateWithLifecycle()
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
@@ -171,13 +184,13 @@ fun NomismaApp(
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
     val themeEvents by viewModel.themeEvents.collectAsStateWithLifecycle()
     val visualPreferences = remember {
-        context.getSharedPreferences(VISUAL_PREFERENCES, Context.MODE_PRIVATE)
+        context.securePreferences(VISUAL_PREFERENCES)
     }
     val appPreferences = remember {
-        context.getSharedPreferences(APP_PREFERENCES, Context.MODE_PRIVATE)
+        context.securePreferences(APP_PREFERENCES)
     }
     val syncPreferences = remember {
-        context.getSharedPreferences("nomisma_sync", Context.MODE_PRIVATE)
+        context.securePreferences("nomisma_sync")
     }
     var qualityPreference by rememberSaveable {
         mutableStateOf(ThemeQualityPreference.fromStorage(visualPreferences.getString(KEY_VISUAL_QUALITY, null)))
@@ -241,7 +254,7 @@ fun NomismaApp(
     LaunchedEffect(snapshot.id, snapshot.participants) {
         if (!autoConnectAttempted && snapshot.participants.size >= 2) {
             autoConnectAttempted = true
-            val preferences = context.getSharedPreferences("nomisma_sync", Context.MODE_PRIVATE)
+            val preferences = context.securePreferences("nomisma_sync")
             if (preferences.getBoolean(KEY_AUTO_CONNECT, false)) {
                 val localId = preferences.getString(KEY_LOCAL_PARTICIPANT, snapshot.participants[0].id)
                     ?: snapshot.participants[0].id
@@ -289,17 +302,28 @@ fun NomismaApp(
                 onFinish = ::finishOnboarding,
                 onSkip = { finishOnboarding(openSettings = false) }
             )
-            else -> Scaffold(
+            else -> {
+            var confirmExit by rememberSaveable { mutableStateOf(false) }
+            BackHandler(enabled = !confirmExit) {
+                when {
+                    showAddExpense -> showAddExpense = false
+                    editingExpense != null -> editingExpense = null
+                    tab != AppTab.HOME -> tab = AppTab.HOME
+                    else -> confirmExit = true
+                }
+            }
+            Scaffold(
             containerColor = Night,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             floatingActionButton = {
+                val addExpenseLabel = t("Aggiungi spesa")
                 FloatingActionButton(
                     onClick = { showAddExpense = true },
                     containerColor = Color(0xFFB8F36B),
                     contentColor = Color(0xFF10140E),
                     modifier = Modifier
                         .navigationBarsPadding()
-                        .semantics { contentDescription = "Aggiungi spesa" }
+                        .semantics { contentDescription = addExpenseLabel }
                 ) { Text("+") }
             },
             bottomBar = {
@@ -424,11 +448,25 @@ fun NomismaApp(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 2.dp, color = Color(0xFFB8F36B))
-                            Text("Salvataggio…", color = Ink, style = MaterialTheme.typography.labelSmall)
+                            Text(t("Salvataggio…"), color = Ink, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
             }
+        }
+        if (confirmExit) {
+            val activity = context as? Activity
+            AlertDialog(
+                onDismissRequest = { confirmExit = false },
+                title = { Text(t("Sicuro di voler uscire?")) },
+                confirmButton = {
+                    TextButton(onClick = { activity?.finish() }) { Text(t("Esci")) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmExit = false }) { Text(t("Annulla")) }
+                }
+            )
+        }
         }
         }
     }
@@ -486,7 +524,7 @@ fun NomismaApp(
 
 private fun localOperationAuthor(context: Context, snapshot: LedgerSnapshot): String {
     val fallback = snapshot.participants.firstOrNull()?.id ?: "alice"
-    return context.getSharedPreferences("nomisma_sync", Context.MODE_PRIVATE)
+    return context.securePreferences("nomisma_sync")
         .getString(KEY_LOCAL_PARTICIPANT, fallback)
         ?.takeIf { candidate -> snapshot.participants.any { it.id == candidate } }
         ?: fallback
@@ -514,7 +552,7 @@ private fun NomismaNavigation(tab: AppTab, onTabSelected: (AppTab) -> Unit) {
                 selected = tab == item,
                 onClick = { onTabSelected(item) },
                 icon = { NavigationGlyph(item, tab == item) },
-                label = { Text(label) }
+                label = { Text(t(label)) }
             )
         }
     }
@@ -580,7 +618,7 @@ private fun AppLoadingScreen() {
     Box(Modifier.fillMaxSize().background(Night), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
             CircularProgressIndicator(color = Color(0xFFB8F36B), strokeWidth = 2.dp)
-            Text("Apertura del ledger…", color = Muted, style = MaterialTheme.typography.bodySmall)
+            Text(t("Apertura del ledger…"), color = Muted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -630,8 +668,8 @@ private fun NomismaOnboarding(
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("NOMISMA", color = Ink, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
-            TextButton(onClick = onSkip) { Text("Salta") }
+            Text(t("NOMISMA"), color = Ink, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
+            TextButton(onClick = onSkip) { Text(t("Salta")) }
         }
         OnboardingArtwork(step)
         Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -645,15 +683,15 @@ private fun NomismaOnboarding(
                 )
             }
         }
-        Text(titles[step], color = Ink, fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.SemiBold)
-        Text(descriptions[step], color = Muted, style = MaterialTheme.typography.bodyLarge)
+        Text(t(titles[step]), color = Ink, fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.SemiBold)
+        Text(t(descriptions[step]), color = Muted, style = MaterialTheme.typography.bodyLarge)
 
         when (step) {
             0 -> {
                 OnboardingFeature("Ledger event-based", "Spese, modifiche e settlement restano ricostruibili.")
                 OnboardingFeature("Tre scene condivise", "Vessel, Woodland e Mempool rappresentano gli stessi dati.")
                 OnboardingFeature("Analisi locali", "Filtri e grafici non interrogano il relay.")
-                Text("Scegli l'ambientazione", color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(t("Scegli l'ambientazione"), color = Ink, fontWeight = FontWeight.SemiBold)
                 ThemeSelector(selectedTheme, onThemeSelected)
             }
             1 -> {
@@ -661,7 +699,7 @@ private fun NomismaOnboarding(
                 OnboardingFeature("Cifratura NIP-44/NIP-59", "Il contenuto finanziario non finisce nei tag pubblici.")
                 Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                        Text("Identità Amber", color = Ink, fontWeight = FontWeight.SemiBold)
+                        Text(t("Identità Amber"), color = Ink, fontWeight = FontWeight.SemiBold)
                         Text(
                             identityPubkey?.let { "Verificata · ${pubkeyFingerprint(it)}" }
                                 ?: "Puoi collegarla ora oppure continuare in modalità locale.",
@@ -678,7 +716,7 @@ private fun NomismaOnboarding(
                             )
                         }
                         identityError?.let { Text(it, color = Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall) }
-                        if (!signerAvailable) Text("Amber non disponibile su questo dispositivo", color = Color(0xFFFFD180), style = MaterialTheme.typography.bodySmall)
+                        if (!signerAvailable) Text(t("Amber non disponibile su questo dispositivo"), color = Color(0xFFFFD180), style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -702,9 +740,9 @@ private fun NomismaOnboarding(
                                 )
                             )
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(preset.name, color = Ink, fontWeight = FontWeight.SemiBold)
+                                Text(t(preset.name), color = Ink, fontWeight = FontWeight.SemiBold)
                                 Text(preset.url, color = Color(0xFFB8F36B), style = MaterialTheme.typography.labelSmall)
-                                Text(preset.detail, color = Muted, style = MaterialTheme.typography.bodySmall)
+                                Text(t(preset.detail), color = Muted, style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
@@ -713,11 +751,10 @@ private fun NomismaOnboarding(
                     value = relayUrl,
                     onValueChange = onRelaySelected,
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Relay personalizzato") },
+                    label = { Text(t("Relay personalizzato")) },
                     singleLine = true
                 )
-                Text(
-                    "Qui scegli il relay. La sessione cifrata verrà avviata solo dopo aver associato l'altro dispositivo.",
+                Text(t("Qui scegli il relay. La sessione cifrata verrà avviata solo dopo aver associato l'altro dispositivo."),
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -732,16 +769,15 @@ private fun NomismaOnboarding(
         if (step < 3) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (step > 0) {
-                    OutlinedButton(onClick = { onStepChange(step - 1) }, modifier = Modifier.weight(1f)) { Text("Indietro") }
+                    OutlinedButton(onClick = { onStepChange(step - 1) }, modifier = Modifier.weight(1f)) { Text(t("Indietro")) }
                 }
-                Button(onClick = { onStepChange(step + 1) }, modifier = Modifier.weight(1f)) { Text("Continua") }
+                Button(onClick = { onStepChange(step + 1) }, modifier = Modifier.weight(1f)) { Text(t("Continua")) }
             }
         } else {
-            Button(onClick = { onFinish(true) }, modifier = Modifier.fillMaxWidth()) { Text("Configura sincronizzazione") }
-            OutlinedButton(onClick = { onFinish(false) }, modifier = Modifier.fillMaxWidth()) { Text("Inizia in modalità locale") }
+            Button(onClick = { onFinish(true) }, modifier = Modifier.fillMaxWidth()) { Text(t("Configura sincronizzazione")) }
+            OutlinedButton(onClick = { onFinish(false) }, modifier = Modifier.fillMaxWidth()) { Text(t("Inizia in modalità locale")) }
         }
-        Text(
-            "Puoi riaprire questa guida dalle Impostazioni.",
+        Text(t("Puoi riaprire questa guida dalle Impostazioni."),
             color = Muted,
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.align(Alignment.CenterHorizontally)
@@ -756,26 +792,27 @@ private fun OnboardingFeature(title: String, detail: String) {
             Modifier.padding(top = 6.dp).size(9.dp).clip(CircleShape).background(Color(0xFFB8F36B))
         )
         Column(Modifier.weight(1f)) {
-            Text(title, color = Ink, fontWeight = FontWeight.SemiBold)
-            Text(detail, color = Muted, style = MaterialTheme.typography.bodySmall)
+            Text(t(title), color = Ink, fontWeight = FontWeight.SemiBold)
+            Text(t(detail), color = Muted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
 @Composable
 private fun OnboardingArtwork(step: Int) {
+    val artworkDescription = t(
+        when (step) {
+            0 -> "Due partecipanti contribuiscono a un contenitore condiviso"
+            1 -> "Ledger locale protetto e identità custodita da Amber"
+            2 -> "Scelta di una rete relay Nostr distribuita"
+            else -> "Due dispositivi collegati attraverso un relay cifrato"
+        }
+    )
     Canvas(
         Modifier
             .fillMaxWidth()
             .height(210.dp)
-            .semantics {
-                contentDescription = when (step) {
-                    0 -> "Due partecipanti contribuiscono a un contenitore condiviso"
-                    1 -> "Ledger locale protetto e identità custodita da Amber"
-                    2 -> "Scelta di una rete relay Nostr distribuita"
-                    else -> "Due dispositivi collegati attraverso un relay cifrato"
-                }
-            }
+            .semantics { contentDescription = artworkDescription }
     ) {
         drawRoundRect(
             Brush.linearGradient(listOf(Color(0xFF182330), Color(0xFF0B0E14))),
@@ -859,6 +896,135 @@ private fun OnboardingArtwork(step: Int) {
 }
 
 @Composable
+private fun t(source: String): String {
+    val language = LocalConfiguration.current.locales[0].language
+    return UiText.translate(source, language)
+}
+
+private fun tr(source: String): String =
+    UiText.translate(source, java.util.Locale.getDefault().language)
+
+private fun openLightningDonation(context: Context): Boolean {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("lightning:$LIGHTNING_ADDRESS"))
+    if (intent.resolveActivity(context.packageManager) == null) return false
+    return runCatching { context.startActivity(intent) }.isSuccess
+}
+
+@Composable
+private fun LedgerOpenError() {
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.Start
+    ) {
+        Text(t("Il ledger locale non può essere aperto. I dati non sono stati cancellati."),
+            color = Ink,
+            style = MaterialTheme.typography.bodyLarge
+        )
+    }
+}
+
+@Composable
+private fun ParticipantThemeOptions(
+    participant: Participant,
+    ownedByThisDevice: Boolean,
+    themeId: String,
+    minerAppearance: MinerAppearance?,
+    onIdentity: (String) -> Unit,
+    onMinerAppearance: (MinerAppearance) -> Unit,
+    onColor: (String) -> Unit
+) {
+    val caption = if (ownedByThisDevice) {
+        "${participant.name} · ${t("la tua identità")}"
+    } else {
+        "${participant.name} · ${t("gestita dall'altro partecipante")}"
+    }
+    Text(
+        caption,
+        color = if (ownedByThisDevice) Ink else Muted,
+        style = MaterialTheme.typography.bodySmall
+    )
+    when (themeId) {
+        ThemeRegistry.WOODLAND -> AnimalIdentityRow(participant, ownedByThisDevice, onIdentity)
+        ThemeRegistry.MEMPOOL -> MinerAppearanceRow(minerAppearance, ownedByThisDevice, onMinerAppearance)
+        ThemeRegistry.VESSEL -> LiquidColorRow(participant, ownedByThisDevice, onColor)
+    }
+}
+
+@Composable
+private fun AnimalIdentityRow(
+    participant: Participant,
+    enabled: Boolean,
+    onIdentity: (String) -> Unit
+) {
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ThemeIdentityRegistry.identities.forEach { identity ->
+            FilterChip(
+                selected = participant.avatarId == identity.id,
+                enabled = enabled,
+                onClick = { if (enabled) onIdentity(identity.id) },
+                label = { Text("${identity.symbol} ${t(identity.displayName)}") }
+            )
+        }
+    }
+}
+
+@Composable
+private fun MinerAppearanceRow(
+    appearance: MinerAppearance?,
+    enabled: Boolean,
+    onAppearance: (MinerAppearance) -> Unit
+) {
+    Text(t("Aspetto minatore"), color = Muted, style = MaterialTheme.typography.labelSmall)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(
+            selected = appearance != MinerAppearance.WOMAN,
+            enabled = enabled,
+            onClick = { onAppearance(MinerAppearance.MAN) },
+            label = { Text(t("Uomo")) }
+        )
+        FilterChip(
+            selected = appearance == MinerAppearance.WOMAN,
+            enabled = enabled,
+            onClick = { onAppearance(MinerAppearance.WOMAN) },
+            label = { Text(t("Donna")) }
+        )
+    }
+}
+
+@Composable
+private fun LiquidColorRow(
+    participant: Participant,
+    enabled: Boolean,
+    onColor: (String) -> Unit
+) {
+    val language = LocalConfiguration.current.locales[0].language
+    Text(t("Colore del liquido"), color = Muted, style = MaterialTheme.typography.labelSmall)
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+        ParticipantColorPalette.colors.forEach { colorHex ->
+            val selected = participant.colorHex.equals(colorHex, ignoreCase = true)
+            val swatch = colorHex.toComposeColor(Color.White)
+            Box(
+                Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(swatch)
+                    .border(
+                        width = if (selected) 3.dp else 1.dp,
+                        color = if (selected) Ink else Ink.copy(alpha = 0.22f),
+                        shape = CircleShape
+                    )
+                    .semantics {
+                        val selectedSuffix = if (selected) UiText.translate(", selezionato", language) else ""
+                        contentDescription = UiText.translate("Colore", language) + " $colorHex$selectedSuffix"
+                    }
+                    .clickable(enabled = enabled) { onColor(colorHex) }
+            )
+        }
+    }
+}
+
+@Composable
 private fun SettingsScreen(
     signer: Signer?,
     snapshot: LedgerSnapshot,
@@ -893,7 +1059,7 @@ private fun SettingsScreen(
     val participants = snapshot.participants
     val context = androidx.compose.ui.platform.LocalContext.current
     val syncPreferences = remember {
-        context.getSharedPreferences("nomisma_sync", Context.MODE_PRIVATE)
+        context.securePreferences("nomisma_sync")
     }
     var relayUrl by rememberSaveable {
         mutableStateOf(syncPreferences.getString(KEY_RELAY_URL, DEFAULT_RELAY_URL) ?: DEFAULT_RELAY_URL)
@@ -925,6 +1091,7 @@ private fun SettingsScreen(
     var showArchivedTags by rememberSaveable { mutableStateOf(false) }
     var showPairingImport by rememberSaveable { mutableStateOf(false) }
     var showForgetPairing by rememberSaveable { mutableStateOf(false) }
+    var donationNote by rememberSaveable { mutableStateOf<String?>(null) }
     var pairingInput by rememberSaveable { mutableStateOf("") }
     var pairingMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var capacityText by rememberSaveable(snapshot.capacityMinor) {
@@ -1026,8 +1193,8 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Spacer(Modifier.height(18.dp))
-        Text("Impostazioni", color = Ink, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
-        Text("Identità e connessione locale", color = Muted)
+        Text(t("Impostazioni"), color = Ink, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+        Text(t("Identità e connessione locale"), color = Muted)
         Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
             Row(
                 Modifier.fillMaxWidth().padding(16.dp),
@@ -1035,15 +1202,15 @@ private fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("Guida iniziale", color = Ink, fontWeight = FontWeight.SemiBold)
-                    Text("Rivedi privacy, Amber e scambio dei codici.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text(t("Guida iniziale"), color = Ink, fontWeight = FontWeight.SemiBold)
+                    Text(t("Rivedi privacy, Amber e scambio dei codici."), color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
-                OutlinedButton(onClick = onReplayOnboarding) { Text("Apri") }
+                OutlinedButton(onClick = onReplayOnboarding) { Text(t("Apri")) }
             }
         }
         Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Amber / NIP-55", color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(t("Amber / NIP-55"), color = Ink, fontWeight = FontWeight.SemiBold)
                 Text(
                     syncState.identity?.let { "Connesso: ${it.pubkey.take(16)}…" } ?: "Nessuna identità collegata",
                     color = if (syncState.identity == null) Muted else Color(0xFFB8F36B)
@@ -1062,17 +1229,17 @@ private fun SettingsScreen(
                     )
                 }
                 if (syncState.status != SyncConnectionStatus.DISCONNECTED) {
-                    Text("Disconnetti il relay per cambiare o verificare l'identità.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text(t("Disconnetti il relay per cambiare o verificare l'identità."), color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 syncState.error?.let { Text(it, color = Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall) }
-                if (signer == null) Text("Signer non configurato", color = Muted)
+                if (signer == null) Text(t("Signer non configurato"), color = Muted)
             }
         }
         Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Partecipanti Nostr", color = Ink, fontWeight = FontWeight.SemiBold)
-                Text("Associa le chiavi firmatarie ai partecipanti del ledger.", color = Muted, style = MaterialTheme.typography.bodySmall)
-                Text("Questo dispositivo registra come", color = Muted, style = MaterialTheme.typography.labelMedium)
+                Text(t("Partecipanti Nostr"), color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(t("Associa le chiavi firmatarie ai partecipanti del ledger."), color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text(t("Questo dispositivo registra come"), color = Muted, style = MaterialTheme.typography.labelMedium)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     participants.forEach { participant ->
                         FilterChip(
@@ -1082,7 +1249,7 @@ private fun SettingsScreen(
                         )
                     }
                 }
-                Text("Il destinatario è", color = Muted, style = MaterialTheme.typography.labelMedium)
+                Text(t("Il destinatario è"), color = Muted, style = MaterialTheme.typography.labelMedium)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     participants.forEach { participant ->
                         FilterChip(
@@ -1092,7 +1259,7 @@ private fun SettingsScreen(
                         )
                     }
                 }
-                Text("Il tuo nome nel ledger", color = Muted, style = MaterialTheme.typography.labelMedium)
+                Text(t("Il tuo nome nel ledger"), color = Muted, style = MaterialTheme.typography.labelMedium)
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1101,7 +1268,7 @@ private fun SettingsScreen(
                     OutlinedTextField(
                         value = participantNameText,
                         onValueChange = { participantNameText = it.take(40) },
-                        label = { Text("Nome") },
+                        label = { Text(t("Nome")) },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
@@ -1109,89 +1276,41 @@ private fun SettingsScreen(
                         enabled = participantNameText.trim().isNotBlank() &&
                             participantNameText.trim() != localParticipant?.name,
                         onClick = { onParticipantName(localParticipantId, participantNameText) }
-                    ) { Text("Salva") }
+                    ) { Text(t("Salva")) }
                 }
-                HorizontalDivider(color = PanelLight)
-                Text("Identità nel tema", color = Ink, style = MaterialTheme.typography.labelMedium)
-                participants.forEach { participant ->
-                    val isOwnedByThisDevice = participant.id == localParticipantId
-                    Text(
-                        if (isOwnedByThisDevice) "${participant.name} · la tua identità" else "${participant.name} · gestita dall'altro partecipante",
-                        color = if (isOwnedByThisDevice) Ink else Muted,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ThemeIdentityRegistry.identities.forEach { identityOption ->
-                            FilterChip(
-                                selected = participant.avatarId == identityOption.id,
-                                enabled = isOwnedByThisDevice,
-                                onClick = {
-                                    if (isOwnedByThisDevice) onParticipantIdentity(participant.id, identityOption.id)
-                                },
-                                label = {
-                                    Text("${identityOption.symbol} ${identityOption.displayName}")
-                                }
-                            )
-                        }
-                    }
-                    if (snapshot.themeId == ThemeRegistry.MEMPOOL) {
-                        Text("Aspetto minatore", color = Muted, style = MaterialTheme.typography.labelSmall)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
-                                selected = minerAppearances[participant.id] != MinerAppearance.WOMAN,
-                                enabled = isOwnedByThisDevice,
-                                onClick = { onMinerAppearance(participant.id, MinerAppearance.MAN) },
-                                label = { Text("Uomo") }
-                            )
-                            FilterChip(
-                                selected = minerAppearances[participant.id] == MinerAppearance.WOMAN,
-                                enabled = isOwnedByThisDevice,
-                                onClick = { onMinerAppearance(participant.id, MinerAppearance.WOMAN) },
-                                label = { Text("Donna") }
-                            )
-                        }
-                    }
-                    Text("Colore contributi", color = Muted, style = MaterialTheme.typography.labelSmall)
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                        ParticipantColorPalette.colors.forEach { colorHex ->
-                            val swatch = colorHex.toComposeColor(Color.White)
-                            Box(
-                                Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .background(swatch)
-                                    .border(
-                                        width = if (participant.colorHex.equals(colorHex, ignoreCase = true)) 3.dp else 1.dp,
-                                        color = if (participant.colorHex.equals(colorHex, ignoreCase = true)) Ink else Ink.copy(alpha = 0.22f),
-                                        shape = CircleShape
-                                    )
-                                    .semantics {
-                                        contentDescription = "Colore $colorHex" +
-                                            if (participant.colorHex.equals(colorHex, ignoreCase = true)) ", selezionato" else ""
-                                    }
-                                    .clickable(enabled = isOwnedByThisDevice) {
-                                        onParticipantColor(participant.id, colorHex)
-                                    }
-                            )
-                        }
+                if (snapshot.themeId == ThemeRegistry.WOODLAND ||
+                    snapshot.themeId == ThemeRegistry.MEMPOOL ||
+                    snapshot.themeId == ThemeRegistry.VESSEL
+                ) {
+                    HorizontalDivider(color = PanelLight)
+                    Text(t("Identità nel tema"), color = Ink, style = MaterialTheme.typography.labelMedium)
+                    participants.forEach { participant ->
+                        ParticipantThemeOptions(
+                            participant = participant,
+                            ownedByThisDevice = participant.id == localParticipantId,
+                            themeId = snapshot.themeId,
+                            minerAppearance = minerAppearances[participant.id],
+                            onIdentity = { onParticipantIdentity(participant.id, it) },
+                            onMinerAppearance = { onMinerAppearance(participant.id, it) },
+                            onColor = { onParticipantColor(participant.id, it) }
+                        )
                     }
                 }
             }
         }
         Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Grafica", color = Ink, fontWeight = FontWeight.SemiBold)
-                Text("Tema condiviso", color = Muted, style = MaterialTheme.typography.labelMedium)
+                Text(t("Grafica"), color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(t("Tema condiviso"), color = Muted, style = MaterialTheme.typography.labelMedium)
                 ThemeSelector(snapshot.themeId, onThemeSelected)
-                Text(
-                    "Il tema è parte della configurazione condivisa del ledger.",
+                Text(t("Il tema è parte della configurazione condivisa del ledger."),
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall
                 )
                 if (snapshot.themeId == ThemeRegistry.WOODLAND) {
-                    Text("Il primo partecipante versa noci; il secondo versa ghiande.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text(t("Il primo partecipante versa noci; il secondo versa ghiande."), color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
-                Text("Qualità delle scene", color = Muted, style = MaterialTheme.typography.labelMedium)
+                Text(t("Qualità delle scene"), color = Muted, style = MaterialTheme.typography.labelMedium)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(
                         ThemeQualityPreference.AUTO to "Auto",
@@ -1202,42 +1321,41 @@ private fun SettingsScreen(
                         FilterChip(
                             selected = qualityPreference == preference,
                             onClick = { onQualityPreference(preference) },
-                            label = { Text(label) }
+                            label = { Text(t(label)) }
                         )
                     }
                 }
-                Text(
-                    "Auto adatta particelle e dettagli a RAM, risparmio energetico e versione Android.",
+                Text(t("Auto adatta particelle e dettagli a RAM, risparmio energetico e versione Android."),
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall
                 )
-                Text("Movimento", color = Muted, style = MaterialTheme.typography.labelMedium)
+                Text(t("Movimento"), color = Muted, style = MaterialTheme.typography.labelMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = motionPreference == ThemeMotionPreference.SYSTEM,
                         onClick = { onMotionPreference(ThemeMotionPreference.SYSTEM) },
-                        label = { Text("Sistema") }
+                        label = { Text(t("Sistema")) }
                     )
                     FilterChip(
                         selected = motionPreference == ThemeMotionPreference.REDUCED,
                         onClick = { onMotionPreference(ThemeMotionPreference.REDUCED) },
-                        label = { Text("Ridotto") }
+                        label = { Text(t("Ridotto")) }
                     )
                 }
-                Text("La preferenza di accessibilità del sistema resta sempre prioritaria.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text(t("La preferenza di accessibilità del sistema resta sempre prioritaria."), color = Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
         Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Ledger", color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(t("Ledger"), color = Ink, fontWeight = FontWeight.SemiBold)
                 OutlinedTextField(
                     value = ledgerTitleText,
                     onValueChange = { ledgerTitleText = it.take(60) },
-                    label = { Text("Nome del ledger") },
+                    label = { Text(t("Nome del ledger")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Text("Valuta", color = Muted, style = MaterialTheme.typography.labelMedium)
+                Text(t("Valuta"), color = Muted, style = MaterialTheme.typography.labelMedium)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SupportedCurrencies.all.forEach { currency ->
                         FilterChip(
@@ -1249,8 +1367,7 @@ private fun SettingsScreen(
                     }
                 }
                 if (!currencyCanChange) {
-                    Text(
-                        "La valuta non può cambiare dopo la prima spesa: gli importi storici non vengono reinterpretati.",
+                    Text(t("La valuta non può cambiare dopo la prima spesa: gli importi storici non vengono reinterpretati."),
                         color = Muted,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -1259,12 +1376,12 @@ private fun SettingsScreen(
                     enabled = ledgerTitleText.trim().isNotBlank() &&
                         (ledgerTitleText.trim() != snapshot.title || selectedCurrency != snapshot.currency),
                     onClick = { onChangeLedgerMetadata(ledgerTitleText, selectedCurrency) }
-                ) { Text("Salva configurazione") }
+                ) { Text(t("Salva configurazione")) }
                 HorizontalDivider(color = PanelLight)
                 OutlinedTextField(
                     value = capacityText,
                     onValueChange = { capacityText = it },
-                    label = { Text("Capacità del ciclo") },
+                    label = { Text(t("Capacità del ciclo")) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -1272,9 +1389,8 @@ private fun SettingsScreen(
                 Button(
                     enabled = parsedCapacity != null && parsedCapacity != snapshot.capacityMinor,
                     onClick = { parsedCapacity?.let(onChangeCapacity) }
-                ) { Text("Aggiorna capacità") }
-                Text(
-                    "Nome, valuta e capacità sono condivisi via Nostr. La capacità guida il progresso dei temi.",
+                ) { Text(t("Aggiorna capacità")) }
+                Text(t("Nome, valuta e capacità sono condivisi via Nostr. La capacità guida il progresso dei temi."),
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -1284,7 +1400,7 @@ private fun SettingsScreen(
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
-                        Text("Categorie", color = Ink, fontWeight = FontWeight.SemiBold)
+                        Text(t("Categorie"), color = Ink, fontWeight = FontWeight.SemiBold)
                         Text("${snapshot.activeCategories.size} attive", color = Muted, style = MaterialTheme.typography.bodySmall)
                     }
                     TextButton(onClick = { showCategoryManager = !showCategoryManager }) {
@@ -1300,7 +1416,7 @@ private fun SettingsScreen(
                         OutlinedTextField(
                             value = newCategoryName,
                             onValueChange = { newCategoryName = it.take(60) },
-                            label = { Text("Nuova categoria") },
+                            label = { Text(t("Nuova categoria")) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
@@ -1320,7 +1436,7 @@ private fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(category.displayName, color = Ink)
+                                Text(t(category.displayName), color = Ink)
                                 Text(
                                     "${if (category.isDefault) "Predefinita · " else ""}${category.usageCount} utilizzi",
                                     color = Muted,
@@ -1330,11 +1446,11 @@ private fun SettingsScreen(
                             TextButton(onClick = {
                                 renamedCategory = category.displayName
                                 categoryToRename = category
-                            }) { Text("Rinomina") }
+                            }) { Text(t("Rinomina")) }
                             TextButton(
                                 enabled = snapshot.activeCategories.size > 1,
                                 onClick = { categoryToArchive = category }
-                            ) { Text("Archivia", color = Color(0xFFFFB4A9)) }
+                            ) { Text(t("Archivia"), color = Color(0xFFFFB4A9)) }
                         }
                     }
                     if (archivedCategories.isNotEmpty()) {
@@ -1353,7 +1469,7 @@ private fun SettingsScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(Modifier.weight(1f)) {
-                                        Text(category.displayName, color = Muted)
+                                        Text(t(category.displayName), color = Muted)
                                         Text(
                                             "${category.usageCount} utilizzi nello storico",
                                             color = Muted,
@@ -1361,7 +1477,7 @@ private fun SettingsScreen(
                                         )
                                     }
                                     OutlinedButton(onClick = { onCreateCategory(category.displayName) }) {
-                                        Text("Ripristina")
+                                        Text(t("Ripristina"))
                                     }
                                 }
                             }
@@ -1376,9 +1492,8 @@ private fun SettingsScreen(
                 val matchingArchivedTag = archivedTags.firstOrNull {
                     it.name == canonicalTagInput(newTagName)
                 }
-                Text("Tag condivisi", color = Ink, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Crea, rinomina o archivia i tag. I tag archiviati restano nello storico.",
+                Text(t("Tag condivisi"), color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(t("Crea, rinomina o archivia i tag. I tag archiviati restano nello storico."),
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -1386,7 +1501,7 @@ private fun SettingsScreen(
                     OutlinedTextField(
                         value = newTagName,
                         onValueChange = { newTagName = it },
-                        label = { Text("Nuovo tag") },
+                        label = { Text(t("Nuovo tag")) },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
@@ -1401,7 +1516,7 @@ private fun SettingsScreen(
                     ) { Text(if (matchingArchivedTag == null) "Aggiungi" else "Ripristina") }
                 }
                 if (snapshot.activeTags.isEmpty()) {
-                    Text("Nessun tag attivo", color = Muted)
+                    Text(t("Nessun tag attivo"), color = Muted)
                 } else {
                     snapshot.activeTags.forEach { tag ->
                         Row(
@@ -1416,9 +1531,9 @@ private fun SettingsScreen(
                             TextButton(onClick = {
                                 renamedTag = tag.name
                                 tagToRename = tag
-                            }) { Text("Rinomina") }
+                            }) { Text(t("Rinomina")) }
                             TextButton(onClick = { tagToArchive = tag }) {
-                                Text("Archivia", color = Color(0xFFFFB4A9))
+                                Text(t("Archivia"), color = Color(0xFFFFB4A9))
                             }
                         }
                     }
@@ -1444,7 +1559,7 @@ private fun SettingsScreen(
                                     )
                                 }
                                 OutlinedButton(onClick = { onCreateTag(tag.name) }) {
-                                    Text("Ripristina")
+                                    Text(t("Ripristina"))
                                 }
                             }
                         }
@@ -1454,14 +1569,14 @@ private fun SettingsScreen(
         }
         Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Relay", color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(t("Relay"), color = Ink, fontWeight = FontWeight.SemiBold)
                 OutlinedTextField(
                     value = relayUrl,
                     onValueChange = {
                         relayUrl = it
                         syncPreferences.edit().putString(KEY_RELAY_URL, it).apply()
                     },
-                    label = { Text("WebSocket URL") },
+                    label = { Text(t("WebSocket URL")) },
                     singleLine = true,
                     enabled = syncState.status == SyncConnectionStatus.DISCONNECTED,
                     modifier = Modifier.fillMaxWidth()
@@ -1483,16 +1598,15 @@ private fun SettingsScreen(
                         recipientPubkey = it
                         syncPreferences.edit().putString(KEY_RECIPIENT_PUBKEY, it).apply()
                     },
-                    label = { Text("Chiave pubblica destinatario") },
-                    placeholder = { Text("hex 64 caratteri") },
+                    label = { Text(t("Chiave pubblica destinatario")) },
+                    placeholder = { Text(t("hex 64 caratteri")) },
                     singleLine = true,
                     enabled = syncState.status == SyncConnectionStatus.DISCONNECTED,
                     modifier = Modifier.fillMaxWidth()
                 )
                 HorizontalDivider(color = PanelLight)
-                Text("Pairing", color = Ink, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Il codice contiene solo relay, chiave pubblica e associazione dei partecipanti. Non contiene spese o chiavi private.",
+                Text(t("Pairing"), color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(t("Il codice contiene solo relay, chiave pubblica e associazione dei partecipanti. Non contiene spese o chiavi private."),
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -1502,11 +1616,11 @@ private fun SettingsScreen(
                         onClick = {
                             outgoingPairingCode?.let { code ->
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("Pairing Nomisma", code))
+                                clipboard.setPrimaryClip(ClipData.newPlainText(tr("Pairing Nomisma"), code))
                                 pairingMessage = "Codice pairing copiato"
                             }
                         }
-                    ) { Text("Copia il mio codice") }
+                    ) { Text(t("Copia il mio codice")) }
                     OutlinedButton(
                         enabled = outgoingPairingCode != null,
                         onClick = {
@@ -1522,10 +1636,10 @@ private fun SettingsScreen(
                                 }.onFailure { pairingMessage = "Nessuna app disponibile per condividere" }
                             }
                         }
-                    ) { Text("Condividi") }
-                    OutlinedButton(onClick = { showPairingImport = true }) { Text("Importa") }
+                    ) { Text(t("Condividi")) }
+                    OutlinedButton(onClick = { showPairingImport = true }) { Text(t("Importa")) }
                 }
-                pairingMessage?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
+                pairingMessage?.let { Text(t(it), color = Muted, style = MaterialTheme.typography.bodySmall) }
                 PairingReadinessCard(pairingReadiness)
                 SyncHealthCard(syncHealth)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1544,13 +1658,13 @@ private fun SettingsScreen(
                                 )
                             )
                         }
-                    ) { Text("Connetti") }
+                    ) { Text(t("Connetti")) }
                     if (syncState.status != SyncConnectionStatus.DISCONNECTED) {
                         OutlinedButton(onClick = {
                             autoConnect = false
                             syncPreferences.edit().putBoolean(KEY_AUTO_CONNECT, false).apply()
                             onDisconnect()
-                        }) { Text("Disconnetti") }
+                        }) { Text(t("Disconnetti")) }
                     }
                 }
                 Text(
@@ -1573,7 +1687,7 @@ private fun SettingsScreen(
                         autoConnect = !autoConnect
                         syncPreferences.edit().putBoolean(KEY_AUTO_CONNECT, autoConnect).apply()
                     },
-                    label = { Text("Riconnetti all'avvio") }
+                    label = { Text(t("Riconnetti all'avvio")) }
                 )
                 val operationStats = syncState.operationStats
                 Text(
@@ -1593,28 +1707,46 @@ private fun SettingsScreen(
                                 recipientPubkey = recipientPubkey
                             )
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            clipboard.setPrimaryClip(ClipData.newPlainText("Diagnostica Nomisma", report))
+                            clipboard.setPrimaryClip(ClipData.newPlainText(tr("Diagnostica Nomisma"), report))
                             pairingMessage = "Diagnostica copiata senza dati finanziari né chiavi complete"
                         }
-                    ) { Text("Copia diagnostica") }
+                    ) { Text(t("Copia diagnostica")) }
                     OutlinedButton(
                         enabled = recipientPubkey.isNotBlank(),
                         onClick = { showForgetPairing = true }
-                    ) { Text("Rimuovi pairing") }
+                    ) { Text(t("Rimuovi pairing")) }
                 }
                 Button(
                     enabled = syncState.isConnected && !syncState.isPublishing && operationStats.pending > 0,
                     onClick = onPublishPending
                 ) { Text(if (syncState.isPublishing) "Sincronizzazione…" else "Pubblica outbox") }
                 syncState.message?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
-                Text(
-                    "La sessione resta attiva cambiando schermata; inbound, EOSE e reconnessione continuano in background finché l'app è aperta.",
+                Text(t("La sessione resta attiva cambiando schermata; inbound, EOSE e reconnessione continuano in background finché l'app è aperta."),
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
         }
-        Text("La chiave privata resta in Amber e non viene salvata da Nomisma.", color = Muted, style = MaterialTheme.typography.bodySmall)
+        Card(
+            modifier = Modifier.clickable {
+                if (openLightningDonation(context)) {
+                    donationNote = null
+                } else {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText(tr("Lightning"), LIGHTNING_ADDRESS))
+                    donationNote = "Nessun wallet Lightning trovato. Indirizzo copiato."
+                }
+            },
+            colors = CardDefaults.cardColors(containerColor = Panel),
+            shape = RoundedCornerShape(20.dp)
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(t("Dona a Nomisma tramite donazioni Lightning"), color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(LIGHTNING_ADDRESS, color = Color(0xFFB8F36B), style = MaterialTheme.typography.bodySmall)
+                donationNote?.let { Text(t(it), color = Muted, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+        Text(t("La chiave privata resta in Amber e non viene salvata da Nomisma."), color = Muted, style = MaterialTheme.typography.bodySmall)
     }
 
     if (showPairingImport) {
@@ -1652,12 +1784,11 @@ private fun SettingsScreen(
     if (showForgetPairing) {
         AlertDialog(
             onDismissRequest = { showForgetPairing = false },
-            title = { Text("Rimuovere il pairing?") },
+            title = { Text(t("Rimuovere il pairing?")) },
             text = {
-                Text(
-                    "Verranno rimossi la chiave dell'altro dispositivo, i ruoli locali e la riconnessione automatica. " +
+                Text(t("Verranno rimossi la chiave dell'altro dispositivo, i ruoli locali e la riconnessione automatica. " +
                         "Il ledger, le spese e l'outbox non verranno eliminati."
-                )
+                ))
             },
             confirmButton = {
                 Button(onClick = {
@@ -1675,9 +1806,9 @@ private fun SettingsScreen(
                         .apply()
                     pairingMessage = "Pairing rimosso · il ledger locale è rimasto intatto"
                     showForgetPairing = false
-                }) { Text("Rimuovi") }
+                }) { Text(t("Rimuovi")) }
             },
-            dismissButton = { TextButton(onClick = { showForgetPairing = false }) { Text("Annulla") } }
+            dismissButton = { TextButton(onClick = { showForgetPairing = false }) { Text(t("Annulla")) } }
         )
     }
 
@@ -1695,9 +1826,9 @@ private fun SettingsScreen(
                 TextButton(onClick = {
                     onArchiveTag(tag.id)
                     tagToArchive = null
-                }) { Text("Archivia", color = Color(0xFFFF8A80)) }
+                }) { Text(t("Archivia"), color = Color(0xFFFF8A80)) }
             },
-            dismissButton = { TextButton(onClick = { tagToArchive = null }) { Text("Annulla") } }
+            dismissButton = { TextButton(onClick = { tagToArchive = null }) { Text(t("Annulla")) } }
         )
     }
 
@@ -1715,9 +1846,9 @@ private fun SettingsScreen(
                 TextButton(onClick = {
                     onArchiveCategory(category.id)
                     categoryToArchive = null
-                }) { Text("Archivia", color = Color(0xFFFF8A80)) }
+                }) { Text(t("Archivia"), color = Color(0xFFFF8A80)) }
             },
-            dismissButton = { TextButton(onClick = { categoryToArchive = null }) { Text("Annulla") } }
+            dismissButton = { TextButton(onClick = { categoryToArchive = null }) { Text(t("Annulla")) } }
         )
     }
 
@@ -1729,7 +1860,7 @@ private fun SettingsScreen(
                 OutlinedTextField(
                     value = renamedTag,
                     onValueChange = { renamedTag = it },
-                    label = { Text("Nuovo nome") },
+                    label = { Text(t("Nuovo nome")) },
                     singleLine = true
                 )
             },
@@ -1743,9 +1874,9 @@ private fun SettingsScreen(
                         onRenameTag(tag.id, renamedTag)
                         tagToRename = null
                     }
-                ) { Text("Salva") }
+                ) { Text(t("Salva")) }
             },
-            dismissButton = { TextButton(onClick = { tagToRename = null }) { Text("Annulla") } }
+            dismissButton = { TextButton(onClick = { tagToRename = null }) { Text(t("Annulla")) } }
         )
     }
 
@@ -1757,7 +1888,7 @@ private fun SettingsScreen(
                 OutlinedTextField(
                     value = renamedCategory,
                     onValueChange = { renamedCategory = it.take(60) },
-                    label = { Text("Nuovo nome") },
+                    label = { Text(t("Nuovo nome")) },
                     singleLine = true
                 )
             },
@@ -1772,9 +1903,9 @@ private fun SettingsScreen(
                         onRenameCategory(category.id, renamedCategory)
                         categoryToRename = null
                     }
-                ) { Text("Salva") }
+                ) { Text(t("Salva")) }
             },
-            dismissButton = { TextButton(onClick = { categoryToRename = null }) { Text("Annulla") } }
+            dismissButton = { TextButton(onClick = { categoryToRename = null }) { Text(t("Annulla")) } }
         )
     }
 }
@@ -1787,7 +1918,7 @@ private fun PairingReadinessCard(readiness: PairingReadiness) {
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Stato configurazione", color = Ink, fontWeight = FontWeight.SemiBold)
+            Text(t("Stato configurazione"), color = Ink, fontWeight = FontWeight.SemiBold)
             PairingCheck("Relay sicuro o LAN autorizzato", readiness.relayReady)
             PairingCheck("Identità verificata con Amber", readiness.identityReady)
             PairingCheck("Chiave dell'altro partecipante", readiness.recipientReady)
@@ -1818,8 +1949,8 @@ private fun SyncHealthCard(summary: SyncHealthSummary) {
         ) {
             Box(Modifier.size(11.dp).clip(CircleShape).background(accent))
             Column(Modifier.weight(1f)) {
-                Text(summary.title, color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
-                Text(summary.detail, color = Muted, style = MaterialTheme.typography.labelSmall)
+                Text(t(summary.title), color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                Text(t(summary.detail), color = Muted, style = MaterialTheme.typography.labelSmall)
             }
         }
     }
@@ -1836,7 +1967,7 @@ private fun PairingCheck(label: String, complete: Boolean) {
                 .background(statusColor)
         )
         Text(
-            text = if (complete) "$label · pronto" else "$label · da completare",
+            text = t(label) + if (complete) " · ${t("pronto")}" else " · ${t("da completare")}",
             color = if (complete) Ink else Muted,
             style = MaterialTheme.typography.bodySmall
         )
@@ -1877,26 +2008,25 @@ private fun PairingImportDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Importa pairing") },
+        title = { Text(t("Importa pairing")) },
         text = {
             Column(
                 Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
-                    "Incolla il codice ricevuto dall'altro partecipante. Nomisma controllerà ledger, ruoli e chiave prima di salvarlo.",
+                Text(t("Incolla il codice ricevuto dall'altro partecipante. Nomisma controllerà ledger, ruoli e chiave prima di salvarlo."),
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall
                 )
                 OutlinedTextField(
                     value = input,
                     onValueChange = onInputChange,
-                    label = { Text("Codice Nomisma") },
+                    label = { Text(t("Codice Nomisma")) },
                     minLines = 3,
                     maxLines = 6,
                     modifier = Modifier.fillMaxWidth()
                 )
-                TextButton(onClick = onPaste) { Text("Incolla dagli appunti") }
+                TextButton(onClick = onPaste) { Text(t("Incolla dagli appunti")) }
                 invite?.takeIf { canImport }?.let { verifiedInvite ->
                     Card(
                         colors = CardDefaults.cardColors(containerColor = PanelLight),
@@ -1904,11 +2034,10 @@ private fun PairingImportDialog(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text("Invito verificato", color = Color(0xFFB8F36B), fontWeight = FontWeight.SemiBold)
+                            Text(t("Invito verificato"), color = Color(0xFFB8F36B), fontWeight = FontWeight.SemiBold)
                             Text("Relay: ${verifiedInvite.relayUrl}", color = Ink, style = MaterialTheme.typography.bodySmall)
                             if (verifiedInvite.ledgerId != snapshot.id) {
-                                Text(
-                                    "Il ledger locale è vuoto: verrà associato in modo permanente a questo invito.",
+                                Text(t("Il ledger locale è vuoto: verrà associato in modo permanente a questo invito."),
                                     color = Color(0xFFFFD180),
                                     style = MaterialTheme.typography.bodySmall
                                 )
@@ -1928,8 +2057,7 @@ private fun PairingImportDialog(
                                 color = Muted,
                                 style = MaterialTheme.typography.bodySmall
                             )
-                            Text(
-                                "Confronta questa impronta con l'altra persona prima di connetterti.",
+                            Text(t("Confronta questa impronta con l'altra persona prima di connetterti."),
                                 color = Color(0xFFFFD180),
                                 style = MaterialTheme.typography.bodySmall
                             )
@@ -1939,17 +2067,16 @@ private fun PairingImportDialog(
                 validationMessage?.let {
                     Text(it, color = Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall)
                 }
-                Text(
-                    "L'importazione non avvia la connessione: potrai verificare i dati e connetterti manualmente.",
+                Text(t("L'importazione non avvia la connessione: potrai verificare i dati e connetterti manualmente."),
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
         },
         confirmButton = {
-            Button(enabled = canImport, onClick = { invite?.let(onImport) }) { Text("Importa") }
+            Button(enabled = canImport, onClick = { invite?.let(onImport) }) { Text(t("Importa")) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
+        dismissButton = { TextButton(onClick = onDismiss) { Text(t("Annulla")) } }
     )
 }
 
@@ -1990,7 +2117,7 @@ private fun HomeScreen(
         Spacer(Modifier.height(18.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column {
-                Text("NOMISMA", color = Ink, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
+                Text(t("NOMISMA"), color = Ink, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
                 Text(snapshot.title, color = Muted, style = MaterialTheme.typography.bodySmall)
             }
             val syncBadge = when (syncState.status) {
@@ -2023,7 +2150,7 @@ private fun HomeScreen(
                 .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
             Column {
-                Text("SALDO NETTO", color = Muted, style = MaterialTheme.typography.labelMedium, letterSpacing = 1.2.sp)
+                Text(t("SALDO NETTO"), color = Muted, style = MaterialTheme.typography.labelMedium, letterSpacing = 1.2.sp)
                 Text(
                     text = if (creditor == null) "In pari" else "${creditor.name.uppercase(Locale.ROOT)} +${balance.amountMinor.formatMinorUnits(snapshot.currency)}",
                     color = if (creditor == null) Ink else balanceAccent,
@@ -2053,9 +2180,9 @@ private fun HomeScreen(
             enabled = snapshot.currentCycleExpenses.isNotEmpty(),
             onClick = { showSettlementConfirmation = true },
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Chiudi e riconcilia il ciclo") }
+        ) { Text(t("Chiudi e riconcilia il ciclo")) }
 
-        Text("Ultime spese", color = Ink, fontWeight = FontWeight.SemiBold)
+        Text(t("Ultime spese"), color = Ink, fontWeight = FontWeight.SemiBold)
         if (snapshot.currentCycleExpenses.isEmpty()) {
             EmptyStatePanel(
                 title = "Il ciclo è ancora vuoto",
@@ -2127,7 +2254,7 @@ private fun HomeSyncBanner(
                         onClick = onPublishPending
                     ) { Text(if (syncState.isPublishing) "Sincronizzazione…" else "Sincronizza ora") }
                 }
-                OutlinedButton(onClick = onOpenSettings) { Text("Apri impostazioni") }
+                OutlinedButton(onClick = onOpenSettings) { Text(t("Apri impostazioni")) }
             }
         }
     }
@@ -2145,7 +2272,7 @@ private fun SettleScreen(snapshot: LedgerSnapshot, onSettle: (SettlementMethod, 
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Spacer(Modifier.height(18.dp))
-        Text("Riconciliazione", color = Ink, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+        Text(t("Riconciliazione"), color = Ink, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
         Text(
             snapshot.currentCycle?.startedAtMillis?.let { "Ciclo iniziato il ${it.formatLocalDate()}" }
                 ?: "Ciclo corrente",
@@ -2153,7 +2280,7 @@ private fun SettleScreen(snapshot: LedgerSnapshot, onSettle: (SettlementMethod, 
         )
         Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(24.dp)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text("Posizione corrente", color = Muted, style = MaterialTheme.typography.labelMedium)
+                Text(t("Posizione corrente"), color = Muted, style = MaterialTheme.typography.labelMedium)
                 Text(
                     if (creditor == null) "Siete in pari"
                     else "${debtor?.name ?: "Il partecipante"} deve ${balance.amountMinor.formatMinorUnits(snapshot.currency)} a ${creditor.name}",
@@ -2191,9 +2318,8 @@ private fun SettleScreen(snapshot: LedgerSnapshot, onSettle: (SettlementMethod, 
             enabled = snapshot.currentCycleExpenses.isNotEmpty(),
             onClick = { showConfirmation = true },
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Conferma e apri un nuovo ciclo") }
-        Text(
-            "Il settlement salva uno snapshot immutabile. Non elimina le spese e non dipende dal tema selezionato.",
+        ) { Text(t("Conferma e apri un nuovo ciclo")) }
+        Text(t("Il settlement salva uno snapshot immutabile. Non elimina le spese e non dipende dal tema selezionato."),
             color = Muted,
             style = MaterialTheme.typography.bodySmall
         )
@@ -2239,7 +2365,7 @@ private fun SettlementConfirmationDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(summary)
-                Text("Metodo", color = Muted, style = MaterialTheme.typography.labelMedium)
+                Text(t("Metodo"), color = Muted, style = MaterialTheme.typography.labelMedium)
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2248,30 +2374,29 @@ private fun SettlementConfirmationDialog(
                         FilterChip(
                             selected = method == option,
                             onClick = { method = option },
-                            label = { Text(option.displayName) }
+                            label = { Text(t(option.displayName)) }
                         )
                     }
                 }
                 OutlinedTextField(
                     value = note,
                     onValueChange = { note = it.take(SettlementPolicy.MAX_NOTE_LENGTH) },
-                    label = { Text("Nota opzionale") },
+                    label = { Text(t("Nota opzionale")) },
                     supportingText = { Text("${note.length}/${SettlementPolicy.MAX_NOTE_LENGTH}") },
                     minLines = 2,
                     maxLines = 4,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Text(
-                    "Metodo e nota vengono salvati nel ciclo e sincronizzati nel payload cifrato.",
+                Text(t("Metodo e nota vengono salvati nel ciclo e sincronizzati nel payload cifrato."),
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
         },
         confirmButton = {
-            Button(onClick = { onConfirm(method, note) }) { Text("Conferma") }
+            Button(onClick = { onConfirm(method, note) }) { Text(t("Conferma")) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
+        dismissButton = { TextButton(onClick = onDismiss) { Text(t("Annulla")) } }
     )
 }
 
@@ -2285,10 +2410,11 @@ private fun SettlementBalanceVisual(snapshot: LedgerSnapshot) {
     val total = snapshot.cycleVolumeMinor.coerceAtLeast(1L)
     val firstRatio = snapshot.contributionFor(first?.id.orEmpty()).toFloat() / total.toFloat()
 
+    val evenBalance = t("Saldo del ciclo in pari")
     val balanceDescription = balance.creditorId?.let { creditorId ->
         val creditor = snapshot.participants.firstOrNull { it.id == creditorId }?.name ?: creditorId
         "Saldo del ciclo: $creditor a credito di ${balance.amountMinor.formatMinorUnits(snapshot.currency)}"
-    } ?: "Saldo del ciclo in pari"
+    } ?: evenBalance
     Canvas(
         Modifier
             .fillMaxWidth()
@@ -2411,7 +2537,7 @@ private fun MetricCard(label: String, value: String, modifier: Modifier) {
             .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(18.dp))
     ) {
         Column(Modifier.padding(13.dp)) {
-            Text(label, color = Muted, fontSize = 10.sp, letterSpacing = 1.sp)
+            Text(t(label), color = Muted, fontSize = 10.sp, letterSpacing = 1.sp)
             Spacer(Modifier.height(4.dp))
             Text(value, color = Ink, fontWeight = FontWeight.SemiBold)
         }
@@ -2430,10 +2556,11 @@ private fun EmptyStatePanel(title: String, detail: String) {
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val emptyLedgerLabel = t("Ledger vuoto")
             Canvas(
                 Modifier
                     .size(48.dp)
-                    .semantics { contentDescription = "Ledger vuoto" }
+                    .semantics { contentDescription = emptyLedgerLabel }
             ) {
                 drawCircle(Color(0xFFB8F36B).copy(alpha = 0.10f), size.minDimension * 0.5f)
                 drawCircle(Color(0xFFB8F36B).copy(alpha = 0.75f), size.minDimension * 0.33f, style = Stroke(1.5.dp.toPx()))
@@ -2453,8 +2580,8 @@ private fun EmptyStatePanel(title: String, detail: String) {
                 )
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(title, color = Ink, fontWeight = FontWeight.SemiBold)
-                Text(detail, color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text(t(title), color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(t(detail), color = Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -2475,8 +2602,8 @@ private fun InsightsScreen(snapshot: LedgerSnapshot) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Spacer(Modifier.height(18.dp))
-        Text("Analisi", color = Ink, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
-        Text("Analisi locale · filtri combinabili", color = Muted)
+        Text(t("Analisi"), color = Ink, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+        Text(t("Analisi locale · filtri combinabili"), color = Muted)
         SavedFilterControls(filterDraft, onApply = { filterDraft = it })
         ExpenseFilterControls(
             snapshot = snapshot,
@@ -2543,9 +2670,9 @@ private fun SavedFilterControls(
         OutlinedButton(
             enabled = current.validationError() == null,
             onClick = { showSaveFilter = true }
-        ) { Text("Salva vista") }
+        ) { Text(t("Salva vista")) }
         if (savedFilters.isNotEmpty()) {
-            OutlinedButton(onClick = { showManageFilters = true }) { Text("Gestisci viste") }
+            OutlinedButton(onClick = { showManageFilters = true }) { Text(t("Gestisci viste")) }
         }
     }
     if (savedFilters.isNotEmpty()) {
@@ -2563,12 +2690,12 @@ private fun SavedFilterControls(
     if (showSaveFilter) {
         AlertDialog(
             onDismissRequest = { showSaveFilter = false },
-            title = { Text("Salva vista") },
+            title = { Text(t("Salva vista")) },
             text = {
                 OutlinedTextField(
                     value = filterName,
                     onValueChange = { filterName = it.take(40) },
-                    label = { Text("Nome") },
+                    label = { Text(t("Nome")) },
                     singleLine = true
                 )
             },
@@ -2585,16 +2712,16 @@ private fun SavedFilterControls(
                         filterName = ""
                         showSaveFilter = false
                     }
-                ) { Text("Salva") }
+                ) { Text(t("Salva")) }
             },
-            dismissButton = { TextButton(onClick = { showSaveFilter = false }) { Text("Annulla") } }
+            dismissButton = { TextButton(onClick = { showSaveFilter = false }) { Text(t("Annulla")) } }
         )
     }
 
     if (showManageFilters) {
         AlertDialog(
             onDismissRequest = { showManageFilters = false },
-            title = { Text("Viste salvate") },
+            title = { Text(t("Viste salvate")) },
             text = {
                 Column(
                     Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
@@ -2610,16 +2737,16 @@ private fun SavedFilterControls(
                             TextButton(onClick = {
                                 onApply(saved.filter)
                                 showManageFilters = false
-                            }) { Text("Carica") }
+                            }) { Text(t("Carica")) }
                             TextButton(onClick = {
                                 savedFilters = store.delete(saved.id)
                                 if (savedFilters.isEmpty()) showManageFilters = false
-                            }) { Text("Elimina", color = Color(0xFFFF8A80)) }
+                            }) { Text(t("Elimina"), color = Color(0xFFFF8A80)) }
                         }
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showManageFilters = false }) { Text("Chiudi") } }
+            confirmButton = { TextButton(onClick = { showManageFilters = false }) { Text(t("Chiudi")) } }
         )
     }
 }
@@ -2639,17 +2766,17 @@ private fun ExpenseFilterControls(
     OutlinedTextField(
         value = draft.searchQuery,
         onValueChange = { onChange(draft.copy(searchQuery = it.take(120))) },
-        label = { Text("Cerca descrizione, esercente, note o tag") },
+        label = { Text(t("Cerca descrizione, esercente, note o tag")) },
         singleLine = true,
         modifier = Modifier.fillMaxWidth()
     )
-    Text("Periodo", color = Ink, style = MaterialTheme.typography.labelMedium)
+    Text(t("Periodo"), color = Ink, style = MaterialTheme.typography.labelMedium)
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         TimeRangePreset.entries.forEach { preset ->
             FilterChip(
                 selected = draft.timeRange == preset,
                 onClick = { onChange(draft.copy(timeRange = preset)) },
-                label = { Text(preset.displayName) }
+                label = { Text(t(preset.displayName)) }
             )
         }
     }
@@ -2658,22 +2785,22 @@ private fun ExpenseFilterControls(
             OutlinedTextField(
                 value = draft.customStart,
                 onValueChange = { onChange(draft.copy(customStart = it.take(10))) },
-                label = { Text("Da (AAAA-MM-GG)") },
+                label = { Text(t("Da (AAAA-MM-GG)")) },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
             OutlinedTextField(
                 value = draft.customEnd,
                 onValueChange = { onChange(draft.copy(customEnd = it.take(10))) },
-                label = { Text("A (AAAA-MM-GG)") },
+                label = { Text(t("A (AAAA-MM-GG)")) },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
         }
     }
-    Text("Partecipanti", color = Ink, style = MaterialTheme.typography.labelMedium)
+    Text(t("Partecipanti"), color = Ink, style = MaterialTheme.typography.labelMedium)
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(draft.participantIds.isEmpty(), { onChange(draft.copy(participantIds = emptySet())) }, label = { Text("Tutti") })
+        FilterChip(draft.participantIds.isEmpty(), { onChange(draft.copy(participantIds = emptySet())) }, label = { Text(t("Tutti")) })
         snapshot.participants.forEach { participant ->
             FilterChip(
                 selected = participant.id in draft.participantIds,
@@ -2682,9 +2809,9 @@ private fun ExpenseFilterControls(
             )
         }
     }
-    Text("Categorie", color = Ink, style = MaterialTheme.typography.labelMedium)
+    Text(t("Categorie"), color = Ink, style = MaterialTheme.typography.labelMedium)
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(draft.categoryIds.isEmpty(), { onChange(draft.copy(categoryIds = emptySet())) }, label = { Text("Tutte") })
+        FilterChip(draft.categoryIds.isEmpty(), { onChange(draft.copy(categoryIds = emptySet())) }, label = { Text(t("Tutte")) })
         snapshot.categories.filter { !it.isArchived || it.usageCount > 0 }.forEach { category ->
             FilterChip(
                 selected = category.id in draft.categoryIds,
@@ -2694,9 +2821,9 @@ private fun ExpenseFilterControls(
         }
     }
     if (availableTags.isNotEmpty()) {
-        Text("Tag · devono corrispondere tutti", color = Ink, style = MaterialTheme.typography.labelMedium)
+        Text(t("Tag · devono corrispondere tutti"), color = Ink, style = MaterialTheme.typography.labelMedium)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(draft.tags.isEmpty(), { onChange(draft.copy(tags = emptySet())) }, label = { Text("Tutti") })
+            FilterChip(draft.tags.isEmpty(), { onChange(draft.copy(tags = emptySet())) }, label = { Text(t("Tutti")) })
             availableTags.forEach { tag ->
                 FilterChip(
                     selected = tag in draft.tags,
@@ -2710,7 +2837,7 @@ private fun ExpenseFilterControls(
         OutlinedTextField(
             value = draft.minAmount,
             onValueChange = { onChange(draft.copy(minAmount = it.take(14))) },
-            label = { Text("Importo minimo") },
+            label = { Text(t("Importo minimo")) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             singleLine = true,
             modifier = Modifier.weight(1f)
@@ -2718,7 +2845,7 @@ private fun ExpenseFilterControls(
         OutlinedTextField(
             value = draft.maxAmount,
             onValueChange = { onChange(draft.copy(maxAmount = it.take(14))) },
-            label = { Text("Importo massimo") },
+            label = { Text(t("Importo massimo")) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             singleLine = true,
             modifier = Modifier.weight(1f)
@@ -2730,7 +2857,7 @@ private fun ExpenseFilterControls(
     if (draft.activeCriteriaCount > 0) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("${draft.activeCriteriaCount} filtri attivi", color = Muted, style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = { onChange(ExpenseFilterDraft(timeRange = defaultRange)) }) { Text("Azzera") }
+            TextButton(onClick = { onChange(ExpenseFilterDraft(timeRange = defaultRange)) }) { Text(t("Azzera")) }
         }
     }
 }
@@ -2744,13 +2871,13 @@ private fun SettlementHistory(snapshot: LedgerSnapshot) {
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Cicli precedenti", color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(t("Cicli precedenti"), color = Ink, fontWeight = FontWeight.SemiBold)
                 if (snapshot.previousCycles.isNotEmpty()) {
                     Text(snapshot.previousCycles.size.toString(), color = Muted, style = MaterialTheme.typography.labelMedium)
                 }
             }
             if (snapshot.previousCycles.isEmpty()) {
-                Text("Nessun ciclo ancora riconciliato", color = Muted)
+                Text(t("Nessun ciclo ancora riconciliato"), color = Muted)
             } else {
                 snapshot.previousCycles.take(6).forEach { cycle ->
                     val creditor = snapshot.participants.firstOrNull { it.id == cycle.creditorId }
@@ -2770,7 +2897,7 @@ private fun SettlementHistory(snapshot: LedgerSnapshot) {
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text(cycle.totalMinor.formatMinorUnits(snapshot.currency), color = Ink, fontWeight = FontWeight.SemiBold)
-                            Text("Dettagli ›", color = Color(0xFFB8F36B), style = MaterialTheme.typography.labelSmall)
+                            Text(t("Dettagli ›"), color = Color(0xFFB8F36B), style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     HorizontalDivider(color = PanelLight)
@@ -2829,15 +2956,15 @@ private fun SettlementCycleDialog(
                 closedBy?.let {
                     Text("Riconciliato da ${it.name}", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
-                Text("Metodo: ${cycle.method.displayName}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text(t("Metodo") + ": " + t(cycle.method.displayName), color = Muted, style = MaterialTheme.typography.bodySmall)
                 if (cycle.note.isNotBlank()) {
-                    Text("Nota", color = Muted, style = MaterialTheme.typography.labelMedium)
+                    Text(t("Nota"), color = Muted, style = MaterialTheme.typography.labelMedium)
                     Text(cycle.note, color = Ink, style = MaterialTheme.typography.bodySmall)
                 }
                 HorizontalDivider(color = PanelLight)
-                Text("Movimenti", color = Ink, fontWeight = FontWeight.SemiBold)
+                Text(t("Movimenti"), color = Ink, fontWeight = FontWeight.SemiBold)
                 if (expenses.isEmpty()) {
-                    Text("Nessun movimento disponibile", color = Muted)
+                    Text(t("Nessun movimento disponibile"), color = Muted)
                 } else {
                     expenses.forEach { expense ->
                         ExpenseRow(expense, snapshot, isLocked = true)
@@ -2846,14 +2973,14 @@ private fun SettlementCycleDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Chiudi") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(t("Chiudi")) } }
     )
 }
 
 private fun Long.formatLocalDate(): String = Instant.ofEpochMilli(this)
     .atZone(ZoneId.systemDefault())
     .toLocalDate()
-    .format(DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ITALIAN))
+    .format(DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.getDefault()))
 
 private val ChartPalette = listOf(
     Color(0xFFB8F36B),
@@ -2876,15 +3003,18 @@ private fun CategoryDonut(values: Map<String, Long>, totalMinor: Long, currency:
             .padding(16.dp)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Composizione della spesa", color = Ink, fontWeight = FontWeight.SemiBold)
+            Text(t("Composizione della spesa"), color = Ink, fontWeight = FontWeight.SemiBold)
             if (entries.isEmpty() || totalMinor <= 0L) {
-                Text("Nessun dato nel periodo selezionato", color = Muted)
+                Text(t("Nessun dato nel periodo selezionato"), color = Muted)
             } else {
+                val categoryPrefix = t("Spesa per categoria: ")
+                val slices = ArrayList<Pair<String, Long>>(entries.size)
+                for ((name, amount) in entries) slices += t(name) to amount
+                val chartDescription = slices.joinToString(", ", prefix = categoryPrefix) { (name, amount) ->
+                    "$name ${amount.formatMinorUnits(currency)}"
+                }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                     Box(Modifier.size(132.dp), contentAlignment = Alignment.Center) {
-                        val chartDescription = entries.joinToString(", ", prefix = "Spesa per categoria: ") { (name, amount) ->
-                            "$name ${amount.formatMinorUnits(currency)}"
-                        }
                         Canvas(
                             Modifier
                                 .fillMaxSize()
@@ -2910,12 +3040,12 @@ private fun CategoryDonut(values: Map<String, Long>, totalMinor: Long, currency:
                             drawCircle(Color.White.copy(alpha = 0.06f), radius = size.minDimension * 0.28f, center = center, style = Stroke(1.dp.toPx()))
                         }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("TOTALE", color = Muted, style = MaterialTheme.typography.labelSmall)
+                            Text(t("TOTALE"), color = Muted, style = MaterialTheme.typography.labelSmall)
                             Text(totalMinor.formatMinorUnits(currency), color = Ink, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        entries.take(5).forEachIndexed { index, (name, amount) ->
+                        slices.take(5).forEachIndexed { index, (name, amount) ->
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.size(8.dp).background(ChartPalette[index % ChartPalette.size], CircleShape))
                                 Spacer(Modifier.width(8.dp))
@@ -2935,21 +3065,22 @@ private fun SpendingTimeline(analytics: AnalyticsSnapshot, currency: String) {
     val points = analytics.spendingOverTime
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Spesa nel tempo", color = Ink, fontWeight = FontWeight.SemiBold)
+            Text(t("Spesa nel tempo"), color = Ink, fontWeight = FontWeight.SemiBold)
             Text(
-                when (analytics.aggregationPeriod) {
+                t(when (analytics.aggregationPeriod) {
                     AggregationPeriod.DAY -> "Aggregazione giornaliera"
                     AggregationPeriod.WEEK -> "Aggregazione settimanale"
                     AggregationPeriod.MONTH -> "Aggregazione mensile"
-                },
+                }),
                 color = Muted,
                 style = MaterialTheme.typography.labelSmall
             )
             if (points.isEmpty()) {
-                Text("Nessun dato nel periodo selezionato", color = Muted)
+                Text(t("Nessun dato nel periodo selezionato"), color = Muted)
             } else {
                 val max = points.maxOf { it.totalMinor }.coerceAtLeast(1L)
-                val timelineDescription = points.joinToString(", ", prefix = "Spesa nel tempo: ") { point ->
+                val timelinePrefix = t("Spesa nel tempo: ")
+                val timelineDescription = points.joinToString(", ", prefix = timelinePrefix) { point ->
                     "${point.label} ${point.totalMinor.formatMinorUnits(currency)}"
                 }
                 Canvas(
@@ -3021,7 +3152,7 @@ private fun PeriodComparisonCard(comparison: PeriodComparison, currency: String)
 
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Confronto temporale", color = Ink, fontWeight = FontWeight.SemiBold)
+            Text(t("Confronto temporale"), color = Ink, fontWeight = FontWeight.SemiBold)
             ComparisonBar(
                 label = "Periodo attuale · ${comparison.currentTransactionCount} voci",
                 amountMinor = comparison.currentTotalMinor,
@@ -3051,7 +3182,7 @@ private fun FilteredBalanceCard(
     val accent = creditor?.colorHex.toComposeColor(Color(0xFFB8F36B))
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Saldo della selezione", color = Ink, fontWeight = FontWeight.SemiBold)
+            Text(t("Saldo della selezione"), color = Ink, fontWeight = FontWeight.SemiBold)
             Text(
                 creditor?.let { "${it.name} +${balance.amountMinor.formatMinorUnits(currency)}" } ?: "In pari",
                 color = if (creditor == null) Ink else accent,
@@ -3068,8 +3199,7 @@ private fun FilteredBalanceCard(
                     )
                 }
             }
-            Text(
-                "È un calcolo analitico sui filtri attivi: non modifica il saldo del ciclo corrente.",
+            Text(t("È un calcolo analitico sui filtri attivi: non modifica il saldo del ciclo corrente."),
                 color = Muted,
                 style = MaterialTheme.typography.labelSmall
             )
@@ -3108,7 +3238,7 @@ private fun AnalyticsSection(title: String, values: Map<String, Long>, currency:
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Text(title, color = Ink, fontWeight = FontWeight.SemiBold)
-            if (values.isEmpty()) Text("Nessun dato", color = Muted)
+            if (values.isEmpty()) Text(t("Nessun dato"), color = Muted)
             val max = values.values.maxOrNull()?.coerceAtLeast(1L) ?: 1L
             values.toList().sortedByDescending { it.second }.take(6).forEachIndexed { index, (name, amount) ->
                 Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -3156,8 +3286,8 @@ private fun HistoryScreen(snapshot: LedgerSnapshot, onEdit: (Expense) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { Spacer(Modifier.height(18.dp)) }
-        item { Text("Cronologia", color = Ink, fontSize = 28.sp, fontWeight = FontWeight.SemiBold) }
-        item { Text("Cerca, filtra o tocca una spesa per modificarla", color = Muted) }
+        item { Text(t("Cronologia"), color = Ink, fontSize = 28.sp, fontWeight = FontWeight.SemiBold) }
+        item { Text(t("Cerca, filtra o tocca una spesa per modificarla"), color = Muted) }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = { filtersExpanded = !filtersExpanded }) {
@@ -3167,7 +3297,7 @@ private fun HistoryScreen(snapshot: LedgerSnapshot, onEdit: (Expense) -> Unit) {
                     )
                 }
                 if (filterDraft.activeCriteriaCount > 0) {
-                    TextButton(onClick = { filterDraft = ExpenseFilterDraft() }) { Text("Azzera") }
+                    TextButton(onClick = { filterDraft = ExpenseFilterDraft() }) { Text(t("Azzera")) }
                 }
             }
         }
@@ -3212,7 +3342,7 @@ private fun HistoryScreen(snapshot: LedgerSnapshot, onEdit: (Expense) -> Unit) {
             grouped.forEach { (date, expenses) ->
                 item(key = "date-$date") {
                     Text(
-                        date.format(DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.ITALIAN))
+                        date.format(DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault()))
                             .replaceFirstChar { it.uppercase() },
                         color = Muted,
                         style = MaterialTheme.typography.labelMedium,
@@ -3411,32 +3541,32 @@ private fun ExpenseEditorDialog(
                 Modifier.heightIn(max = 540.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                OutlinedTextField(amount, { amount = it }, label = { Text("Importo") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                OutlinedTextField(amount, { amount = it }, label = { Text(t("Importo")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                 OutlinedTextField(
                     description,
                     { description = it.take(ExpensePolicy.MAX_DESCRIPTION_LENGTH) },
-                    label = { Text("Descrizione") },
+                    label = { Text(t("Descrizione")) },
                     singleLine = true
                 )
-                Text("Chi ha pagato?", style = MaterialTheme.typography.labelMedium)
+                Text(t("Chi ha pagato?"), style = MaterialTheme.typography.labelMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     snapshot.participants.forEach { participant ->
                         FilterChip(author == participant.id, { author = participant.id }, label = { Text(participant.name) })
                     }
                 }
-                Text("Categoria", style = MaterialTheme.typography.labelMedium)
+                Text(t("Categoria"), style = MaterialTheme.typography.labelMedium)
                 if (recentCategoryIds.isNotEmpty()) {
-                    Text("Le più recenti sono mostrate per prime", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    Text(t("Le più recenti sono mostrate per prime"), color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     categoryOptions.forEach { option ->
-                        FilterChip(category == option.id, { category = option.id }, label = { Text(option.displayName) })
+                        FilterChip(category == option.id, { category = option.id }, label = { Text(t(option.displayName)) })
                     }
                 }
                 OutlinedTextField(
                     tags,
                     { tags = it.take((ExpensePolicy.MAX_TAG_LENGTH + 2) * ExpensePolicy.MAX_TAGS) },
-                    label = { Text("Tag opzionali, separati da virgola") },
+                    label = { Text(t("Tag opzionali, separati da virgola")) },
                     singleLine = true
                 )
                 if (!tagsAreValid) {
@@ -3447,7 +3577,7 @@ private fun ExpenseEditorDialog(
                     )
                 }
                 if (quickTags.isNotEmpty()) {
-                    Text("Tag rapidi", style = MaterialTheme.typography.labelMedium)
+                    Text(t("Tag rapidi"), style = MaterialTheme.typography.labelMedium)
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         quickTags.forEach { tag ->
                             val selected = tags.split(',').map(::canonicalTagInput).contains(tag)
@@ -3498,9 +3628,9 @@ private fun ExpenseEditorDialog(
                     OutlinedTextField(
                         value = occurredDate,
                         onValueChange = { occurredDate = it.take(10) },
-                        label = { Text("Data della spesa (AAAA-MM-GG)") },
+                        label = { Text(t("Data della spesa (AAAA-MM-GG)")) },
                         supportingText = {
-                            if (occurredAtMillis == null) Text("Inserisci una data valida, non futura")
+                            if (occurredAtMillis == null) Text(t("Inserisci una data valida, non futura"))
                         },
                         isError = occurredAtMillis == null,
                         singleLine = true
@@ -3508,13 +3638,13 @@ private fun ExpenseEditorDialog(
                     OutlinedTextField(
                         value = merchant,
                         onValueChange = { merchant = it.take(ExpensePolicy.MAX_MERCHANT_LENGTH) },
-                        label = { Text("Esercente") },
+                        label = { Text(t("Esercente")) },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = notes,
                         onValueChange = { notes = it.take(ExpensePolicy.MAX_NOTES_LENGTH) },
-                        label = { Text("Note") },
+                        label = { Text(t("Note")) },
                         minLines = 2,
                         maxLines = 4
                     )
@@ -3538,16 +3668,16 @@ private fun ExpenseEditorDialog(
                     )
                     entryPreferences.record(category, normalizedTags, author)
                 }
-            ) { Text("Salva") }
+            ) { Text(t("Salva")) }
         },
         dismissButton = {
             Row {
                 onDelete?.let {
                     TextButton(onClick = { showDeleteConfirmation = true }) {
-                        Text("Elimina", color = Color(0xFFFF8A80))
+                        Text(t("Elimina"), color = Color(0xFFFF8A80))
                     }
                 }
-                TextButton(onClick = onDismiss) { Text("Annulla") }
+                TextButton(onClick = onDismiss) { Text(t("Annulla")) }
             }
         }
     )
@@ -3555,13 +3685,12 @@ private fun ExpenseEditorDialog(
     if (showDeleteConfirmation && expense != null && onDelete != null) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirmation = false },
-            title = { Text("Eliminare questa spesa?") },
+            title = { Text(t("Eliminare questa spesa?")) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(expense.description, color = Ink, fontWeight = FontWeight.SemiBold)
                     Text(expense.amountMinor.formatMinorUnits(snapshot.currency), color = Muted)
-                    Text(
-                        "La spesa verrà rimossa dal ledger tramite un'operazione sincronizzabile. Questa azione non può essere annullata dall'app.",
+                    Text(t("La spesa verrà rimossa dal ledger tramite un'operazione sincronizzabile. Questa azione non può essere annullata dall'app."),
                         color = Muted,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -3571,10 +3700,10 @@ private fun ExpenseEditorDialog(
                 TextButton(onClick = {
                     showDeleteConfirmation = false
                     onDelete()
-                }) { Text("Elimina definitivamente", color = Color(0xFFFF8A80)) }
+                }) { Text(t("Elimina definitivamente"), color = Color(0xFFFF8A80)) }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteConfirmation = false }) { Text("Mantieni") }
+                TextButton(onClick = { showDeleteConfirmation = false }) { Text(t("Mantieni")) }
             }
         )
     }

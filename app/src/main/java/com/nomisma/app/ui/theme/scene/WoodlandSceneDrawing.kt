@@ -2,6 +2,7 @@ package com.nomisma.app.ui.theme.scene
 
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -333,14 +334,26 @@ private fun DrawScope.drawWoodenContainer(
         )
     }
 
+    // Inner edge of the metal rim on container_log.webp. The photo already
+    // has the hollow, so the dark fill and stroke are only the procedural fallback.
+    val windowLeft = left + width * 0.292f
+    val windowTop = top + height * 0.368f
+    val windowRight = left + width * 0.748f
+    val windowBottom = top + height * 0.652f
     val window = Path().apply {
-        moveTo(left + width * 0.31f, top + height * 0.39f)
-        quadraticTo(left + width * 0.50f, top + height * 0.34f, left + width * 0.69f, top + height * 0.39f)
-        lineTo(left + width * 0.67f, top + height * 0.70f)
-        quadraticTo(left + width * 0.50f, top + height * 0.74f, left + width * 0.33f, top + height * 0.70f)
-        close()
+        addRoundRect(
+            RoundRect(
+                left = windowLeft,
+                top = windowTop,
+                right = windowRight,
+                bottom = windowBottom,
+                cornerRadius = CornerRadius(width * 0.070f, height * 0.105f)
+            )
+        )
     }
-    drawPath(window, Brush.verticalGradient(listOf(Color(0xFF050704), Color(0xFF17140D))))
+    if (logAsset == null) {
+        drawPath(window, Brush.verticalGradient(listOf(Color(0xFF050704), Color(0xFF17140D))))
+    }
 
     val maxObjects = when (frame.quality) {
         ThemeRenderQuality.LOW -> 12
@@ -350,24 +363,28 @@ private fun DrawScope.drawWoodenContainer(
     val visible = (maxObjects * fill).roundToInt().coerceIn(0, maxObjects)
     val total = state.participantAContributionMinor + state.participantBContributionMinor
     val ratioA = if (total == 0L) 0.5f else state.participantAContributionMinor.toFloat() / total.toFloat()
+    val columns = 7
+    val innerLeft = windowLeft + width * 0.02f
+    val innerSpan = (windowRight - windowLeft) - width * 0.04f
     clipPath(window) {
         repeat(visible) { index ->
             val ownerA = index.toFloat() / maxObjects < ratioA
-            val columns = 7
             val row = index / columns
             val column = index % columns
-            val x = left + width * 0.355f + column * width * 0.047f + (pseudo(index, 0.32f) - 0.5f) * 5.dp.toPx()
-            val y = top + height * 0.68f - row * 8.dp.toPx() - pseudo(index, 0.88f) * 2.dp.toPx()
+            val x = innerLeft + innerSpan * ((column + 0.5f) / columns) + (pseudo(index, 0.32f) - 0.5f) * 4.dp.toPx()
+            val y = windowBottom - height * 0.06f - row * 8.dp.toPx() - pseudo(index, 0.88f) * 2.dp.toPx()
             drawWoodlandToken(ownerA, Offset(x, y), 0.68f, index * 19f)
         }
         drawRect(
             Brush.linearGradient(listOf(Color.White.copy(alpha = 0.10f), Color.Transparent, Color.White.copy(alpha = 0.025f))),
-            Offset(left + width * 0.31f, top + height * 0.36f),
-            Size(width * 0.38f, height * 0.39f)
+            Offset(windowLeft, windowTop),
+            Size(windowRight - windowLeft, windowBottom - windowTop)
         )
     }
-    drawPath(window, Color(0xFF21150D).copy(alpha = 0.88f), style = Stroke(3.6.dp.toPx(), join = StrokeJoin.Round))
-    drawPath(window, Color.White.copy(alpha = 0.17f), style = Stroke(0.8.dp.toPx(), join = StrokeJoin.Round))
+    if (logAsset == null) {
+        drawPath(window, Color(0xFF21150D).copy(alpha = 0.88f), style = Stroke(3.6.dp.toPx(), join = StrokeJoin.Round))
+        drawPath(window, Color.White.copy(alpha = 0.17f), style = Stroke(0.8.dp.toPx(), join = StrokeJoin.Round))
+    }
 }
 
 private fun DrawScope.drawWoodlandCharacter(

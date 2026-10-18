@@ -3,6 +3,7 @@ package com.nomisma.app.nostr
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import com.nomisma.app.security.securePreferences
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.ActivityResultCallback
@@ -19,7 +20,7 @@ import kotlin.coroutines.resumeWithException
 class AmberSigner(
     private val activity: ComponentActivity
 ) : Signer, DefaultLifecycleObserver {
-    private val preferences = activity.getSharedPreferences("nomisma_signer", Activity.MODE_PRIVATE)
+    private val preferences = activity.securePreferences("nomisma_signer")
     private val pending = ConcurrentHashMap<String, CancellableContinuation<ActivityResult>>()
     private var identity: SignerIdentity? = preferences.getString(KEY_PUBKEY, null)
         ?.trim()

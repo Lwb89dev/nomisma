@@ -25,7 +25,12 @@ object Nip44V2 {
         require(recipientPubkey.size == 32) { "Recipient pubkey must be 32 bytes" }
         val sharedX = Secp256k1Jni.ecdh(privateKey, byteArrayOf(2) + recipientPubkey)
         val conversationKey = hkdfExtract(sharedX, NIP44_SALT)
-        return encryptWithConversationKey(plaintext, conversationKey, randomBytes(32))
+        return try {
+            encryptWithConversationKey(plaintext, conversationKey, randomBytes(32))
+        } finally {
+            sharedX.fill(0)
+            conversationKey.fill(0)
+        }
     }
 
     internal fun encryptWithConversationKey(
@@ -37,9 +42,14 @@ object Nip44V2 {
         require(conversationKey.size == 32) { "Conversation key must be 32 bytes" }
         require(nonce.size == 32) { "Nonce must be 32 bytes" }
         val keys = messageKeys(conversationKey, nonce)
-        val ciphertext = chacha20(keys.chachaKey, keys.chachaNonce, padded)
-        val mac = hmacSha256(keys.hmacKey, nonce + ciphertext)
-        return Base64.getEncoder().encodeToString(byteArrayOf(VERSION) + nonce + ciphertext + mac)
+        try {
+            val ciphertext = chacha20(keys.chachaKey, keys.chachaNonce, padded)
+            val mac = hmacSha256(keys.hmacKey, nonce + ciphertext)
+            return Base64.getEncoder().encodeToString(byteArrayOf(VERSION) + nonce + ciphertext + mac)
+        } finally {
+            padded.fill(0)
+            keys.wipe()
+        }
     }
 
     internal fun decryptWithConversationKey(payload: String, conversationKey: ByteArray): String {
@@ -50,9 +60,18 @@ object Nip44V2 {
         val ciphertext = decoded.copyOfRange(33, decoded.size - 32)
         val mac = decoded.copyOfRange(decoded.size - 32, decoded.size)
         val keys = messageKeys(conversationKey, nonce)
-        val expectedMac = hmacSha256(keys.hmacKey, nonce + ciphertext)
-        require(MessageDigest.isEqual(mac, expectedMac)) { "Invalid NIP-44 MAC" }
-        return unpad(chacha20(keys.chachaKey, keys.chachaNonce, ciphertext))
+        try {
+            val expectedMac = hmacSha256(keys.hmacKey, nonce + ciphertext)
+            require(MessageDigest.isEqual(mac, expectedMac)) { "Invalid NIP-44 MAC" }
+            val plainBytes = chacha20(keys.chachaKey, keys.chachaNonce, ciphertext)
+            try {
+                return unpad(plainBytes)
+            } finally {
+                plainBytes.fill(0)
+            }
+        } finally {
+            keys.wipe()
+        }
     }
 
     private fun pad(plaintext: String): ByteArray {
@@ -97,11 +116,15 @@ object Nip44V2 {
 
     private fun messageKeys(conversationKey: ByteArray, nonce: ByteArray): MessageKeys {
         val expanded = hkdfExpand(conversationKey, nonce, 76)
-        return MessageKeys(
-            chachaKey = expanded.copyOfRange(0, 32),
-            chachaNonce = expanded.copyOfRange(32, 44),
-            hmacKey = expanded.copyOfRange(44, 76)
-        )
+        try {
+            return MessageKeys(
+                chachaKey = expanded.copyOfRange(0, 32),
+                chachaNonce = expanded.copyOfRange(32, 44),
+                hmacKey = expanded.copyOfRange(44, 76)
+            )
+        } finally {
+            expanded.fill(0)
+        }
     }
 
     private fun chacha20(key: ByteArray, nonce: ByteArray, input: ByteArray): ByteArray {
@@ -127,12 +150,15 @@ object Nip44V2 {
             mac.update(previous)
             mac.update(info)
             mac.update(counter.toByte())
-            previous = mac.doFinal()
+            val next = mac.doFinal()
+            previous.fill(0)
+            previous = next
             val copyLength = minOf(previous.size, length - offset)
             previous.copyInto(result, offset, 0, copyLength)
             offset += copyLength
             counter += 1
         }
+        previous.fill(0)
         return result
     }
 
@@ -148,7 +174,13 @@ object Nip44V2 {
         val chachaKey: ByteArray,
         val chachaNonce: ByteArray,
         val hmacKey: ByteArray
-    )
+    ) {
+        fun wipe() {
+            chachaKey.fill(0)
+            chachaNonce.fill(0)
+            hmacKey.fill(0)
+        }
+    }
 
     private object Hex {
         fun decode(value: String): ByteArray {

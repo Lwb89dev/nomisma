@@ -47,8 +47,6 @@ internal class VesselFrame {
     val beamPathLeft = Path()
     val beamPathRight = Path()
     val vesselPath = Path()
-    val handlePath = Path()
-    val rimPath = Path()
     val surfacePath = Path()
     val surfaceBackPath = Path()
     val scratchPath = Path()
@@ -81,64 +79,56 @@ internal fun DrawScope.drawVesselScene(frame: VesselFrame) {
     )
     drawVesselDust(frame)
 
-    // These measurements track the transparent glass asset rather than its
-    // full bitmap bounds (which also include the handle and empty padding).
-    val centerX = size.width * 0.405f
-    val top = size.height * 0.125f
-    val bottom = size.height * 0.875f
-    val bodyLeft = size.width * 0.145f
-    val bodyRight = size.width * 0.665f
-    val vessel = buildVesselPath(frame.vesselPath, centerX, top, bottom, bodyLeft, bodyRight)
-    val liquidBottom = bottom - 5.dp.toPx()
-    val liquidHeight = (bottom - top) * 0.84f * fill.coerceIn(0f, 1f)
-    val liquidTop = liquidBottom - liquidHeight
+    // Liquid and glass share the photo's rectangle. The cavity is the inner
+    // wall of pitcher.webp, not a separate carafe silhouette.
+    val viewportWidth = size.width
+    val viewportHeight = size.height
+    val placeLeft = VesselGeometry.pitcherLeft(viewportWidth)
+    val placeTop = VesselGeometry.pitcherTop(viewportHeight)
+    val placeWidth = VesselGeometry.pitcherWidth(viewportWidth)
+    val placeHeight = VesselGeometry.pitcherHeight(viewportHeight)
+    val cavity = VesselGeometry.buildCavity(frame.vesselPath, viewportWidth, viewportHeight)
+    val surfaceV = VesselGeometry.surfaceV(fill)
+    val (surfaceLeftU, surfaceRightU) = VesselGeometry.spanAtV(surfaceV)
+    val liquidTop = VesselGeometry.canvasY(viewportHeight, surfaceV)
+    val liquidBottom = VesselGeometry.canvasY(viewportHeight, VesselGeometry.FILL_BOTTOM_V)
+    val surfaceLeft = VesselGeometry.canvasX(viewportWidth, surfaceLeftU)
+    val surfaceRight = VesselGeometry.canvasX(viewportWidth, surfaceRightU)
+    val (bellyLeftU, bellyRightU) = VesselGeometry.spanAtV(VesselGeometry.BELLY_V)
+    val bellyLeft = VesselGeometry.canvasX(viewportWidth, bellyLeftU)
+    val bellyRight = VesselGeometry.canvasX(viewportWidth, bellyRightU)
+    val bodyCenterX = (surfaceLeft + surfaceRight) / 2f
 
     drawOval(
         Brush.radialGradient(listOf(Color.Black.copy(alpha = 0.82f), Color.Transparent)),
-        topLeft = Offset(size.width * 0.18f, size.height * 0.79f),
-        size = Size(size.width * 0.66f, size.height * 0.17f)
+        topLeft = Offset(VesselGeometry.canvasX(viewportWidth, 0.18f), VesselGeometry.canvasY(viewportHeight, 0.90f)),
+        size = Size(placeWidth * 0.58f, placeHeight * 0.09f)
     )
 
-    if (frame.assets?.pitcher == null) {
-        drawPitcherHandle(frame, bodyRight, top, bottom, participantBColor)
-    }
-
-    clipPath(vessel) {
-        drawRect(
-            Brush.linearGradient(
-                listOf(
-                    participantAColor.copy(alpha = 0.10f),
-                    Color(0xFFB9D8EA).copy(alpha = 0.035f),
-                    participantBColor.copy(alpha = 0.11f)
-                ),
-                start = Offset(bodyLeft, top),
-                end = Offset(bodyRight, bottom)
-            ),
-            topLeft = Offset(bodyLeft, top),
-            size = Size(bodyRight - bodyLeft, bottom - top)
-        )
-        if (fill > 0f) {
-            val total = state.participantAContributionMinor + state.participantBContributionMinor
-            val ratioA = if (total <= 0L) 0.5f else state.participantAContributionMinor.toFloat() / total.toFloat()
-            val liquidBrush = frame.materials?.liquid(
-                width = size.width,
-                height = size.height,
-                time = frame.ambient,
-                ratioA = ratioA,
-                energy = contributionGlow,
-                colorA = participantAColor,
-                colorB = participantBColor
-            ) ?: conservedLiquidBrush(participantAColor, participantBColor, ratioA, bodyLeft, bodyRight)
+    if (fill > 0f) {
+        val total = state.participantAContributionMinor + state.participantBContributionMinor
+        val ratioA = if (total <= 0L) 0.5f else state.participantAContributionMinor.toFloat() / total.toFloat()
+        val liquidBrush = frame.materials?.liquid(
+            width = viewportWidth,
+            height = viewportHeight,
+            time = frame.ambient,
+            ratioA = ratioA,
+            energy = contributionGlow,
+            colorA = participantAColor,
+            colorB = participantBColor
+        ) ?: conservedLiquidBrush(participantAColor, participantBColor, ratioA, bellyLeft, bellyRight)
+        val (detailLeftU, detailRightU) = VesselGeometry.spanAtV((surfaceV + VesselGeometry.FILL_BOTTOM_V) * 0.5f)
+        clipPath(cavity) {
             drawRect(
                 liquidBrush,
-                Offset(bodyLeft - 8.dp.toPx(), liquidTop - 8.dp.toPx()),
-                Size(bodyRight - bodyLeft + 16.dp.toPx(), liquidHeight + 18.dp.toPx())
+                Offset(placeLeft, liquidTop),
+                Size(placeWidth, (liquidBottom - liquidTop).coerceAtLeast(1f))
             )
             drawLiquidVolumeDetail(
                 liquidTop = liquidTop,
                 liquidBottom = liquidBottom,
-                left = bodyLeft,
-                right = bodyRight,
+                left = VesselGeometry.canvasX(viewportWidth, detailLeftU),
+                right = VesselGeometry.canvasX(viewportWidth, detailRightU),
                 colorA = participantAColor,
                 colorB = participantBColor,
                 ratioA = ratioA,
@@ -147,24 +137,27 @@ internal fun DrawScope.drawVesselScene(frame: VesselFrame) {
             drawLiquidSurface(
                 frame = frame,
                 liquidTop = liquidTop,
-                left = bodyLeft,
-                right = bodyRight,
+                left = surfaceLeft,
+                right = surfaceRight,
                 impactWave = impactWave
             )
         }
     }
 
     if (frame.contribution > 0f) {
+        val pourSide = if (frame.contributingParticipantId == state.participantA?.id) -1f else 1f
+        val pourU = ((surfaceLeftU + surfaceRightU) / 2f + pourSide * (surfaceRightU - surfaceLeftU) * 0.12f)
+            .coerceIn(surfaceLeftU, surfaceRightU)
         drawLiquidContribution(
             frame = frame,
             colorA = participantAColor,
             colorB = participantBColor,
-            centerX = centerX,
-            vesselTop = top,
+            centerX = VesselGeometry.canvasX(viewportWidth, pourU),
+            vesselTop = VesselGeometry.canvasY(viewportHeight, 0.24f),
             vesselBottom = liquidBottom,
             liquidSurfaceY = if (fill > 0.01f) liquidTop else liquidBottom,
-            cavityLeft = bodyLeft,
-            cavityRight = bodyRight
+            cavityLeft = bellyLeft,
+            cavityRight = bellyRight
         )
     }
 
@@ -172,38 +165,43 @@ internal fun DrawScope.drawVesselScene(frame: VesselFrame) {
     if (pitcher != null) {
         drawAssetInRect(
             image = pitcher,
-            left = size.width * 0.01f,
-            top = size.height * 0.055f,
-            width = size.width * 0.91f,
-            height = size.height * 0.86f
+            left = placeLeft,
+            top = placeTop,
+            width = placeWidth,
+            height = placeHeight
         )
     } else {
-        drawPath(vessel, Color(0xFFBBD6E5).copy(alpha = 0.13f), style = Stroke(13.dp.toPx(), join = StrokeJoin.Round))
+        drawPath(cavity, Color(0xFFBBD6E5).copy(alpha = 0.13f), style = Stroke(13.dp.toPx(), join = StrokeJoin.Round))
         drawPath(
-            vessel,
+            cavity,
             Brush.horizontalGradient(
                 0f to Color.White.copy(alpha = 0.75f),
                 0.14f to participantAColor.copy(alpha = 0.34f),
                 0.46f to Color.White.copy(alpha = 0.055f),
                 0.78f to participantBColor.copy(alpha = 0.34f),
                 1f to Color.White.copy(alpha = 0.72f),
-                startX = bodyLeft,
-                endX = bodyRight
+                startX = bellyLeft,
+                endX = bellyRight
             ),
             style = Stroke(2.3.dp.toPx(), join = StrokeJoin.Round)
         )
-        drawVesselHighlights(frame, centerX, top, bottom, bodyLeft, bodyRight)
-        drawPitcherRim(frame, centerX, top, bodyRight - bodyLeft, participantAColor, participantBColor)
     }
 
     if (state.overflowRatio > 0f && frame.settlement == 0f) {
-        drawVesselOverflow(state, frame, participantAColor, participantBColor, centerX, top)
+        drawVesselOverflow(
+            state,
+            frame,
+            participantAColor,
+            participantBColor,
+            VesselGeometry.canvasX(viewportWidth, VesselGeometry.SPOUT_U),
+            VesselGeometry.canvasY(viewportHeight, VesselGeometry.SPOUT_V)
+        )
     }
     if (settlementGlow > 0f) {
         drawCircle(
             Brush.radialGradient(listOf(Color.White.copy(alpha = settlementGlow * 0.42f), Color.Transparent)),
             radius = size.minDimension * (0.18f + settlementGlow * 0.34f),
-            center = Offset(centerX, size.height * 0.52f)
+            center = Offset(bodyCenterX, VesselGeometry.canvasY(viewportHeight, 0.55f))
         )
     }
 }
@@ -230,75 +228,6 @@ private fun DrawScope.drawStudioLightShafts(colorA: Color, colorB: Color, frame:
     drawPath(rightBeam, Brush.verticalGradient(listOf(colorB.copy(alpha = 0.02f), colorB.copy(alpha = 0.11f * breathe))))
 }
 
-private fun DrawScope.drawPitcherHandle(frame: VesselFrame, right: Float, top: Float, bottom: Float, accent: Color) {
-    val height = bottom - top
-    val handle = frame.handlePath.apply {
-        rewind()
-        moveTo(right - 2.dp.toPx(), top + height * 0.28f)
-        cubicTo(
-            right + size.width * 0.22f,
-            top + height * 0.22f,
-            right + size.width * 0.23f,
-            top + height * 0.67f,
-            right - 1.dp.toPx(),
-            top + height * 0.73f
-        )
-    }
-    drawPath(handle, Color.Black.copy(alpha = 0.62f), style = Stroke(31.dp.toPx(), cap = StrokeCap.Round))
-    drawPath(handle, Color(0xFFD9F0FA).copy(alpha = 0.20f), style = Stroke(24.dp.toPx(), cap = StrokeCap.Round))
-    drawPath(handle, Color(0xFF09131A).copy(alpha = 0.78f), style = Stroke(15.dp.toPx(), cap = StrokeCap.Round))
-    drawPath(handle, accent.copy(alpha = 0.20f), style = Stroke(10.dp.toPx(), cap = StrokeCap.Round))
-    drawPath(handle, Color.White.copy(alpha = 0.56f), style = Stroke(1.7.dp.toPx(), cap = StrokeCap.Round))
-}
-
-private fun DrawScope.drawPitcherRim(
-    frame: VesselFrame,
-    centerX: Float,
-    top: Float,
-    bodyWidth: Float,
-    colorA: Color,
-    colorB: Color
-) {
-    val lipLeft = centerX - bodyWidth * 0.21f
-    val lipRight = centerX + bodyWidth * 0.27f
-    val spoutTip = centerX + bodyWidth * 0.55f
-    drawOval(
-        Brush.verticalGradient(listOf(Color(0xFF02070B).copy(alpha = 0.88f), Color(0xFF6F9AAE).copy(alpha = 0.18f))),
-        Offset(lipLeft, top - 4.dp.toPx()),
-        Size(lipRight - lipLeft, 11.dp.toPx())
-    )
-    val lip = frame.rimPath.apply {
-        rewind()
-        moveTo(lipLeft, top + 1.dp.toPx())
-        cubicTo(
-            centerX - bodyWidth * 0.08f, top - 6.dp.toPx(),
-            centerX + bodyWidth * 0.15f, top - 5.dp.toPx(),
-            lipRight, top
-        )
-        quadraticTo(centerX + bodyWidth * 0.42f, top - 2.dp.toPx(), spoutTip, top - 13.dp.toPx())
-        quadraticTo(centerX + bodyWidth * 0.46f, top + 5.dp.toPx(), lipRight, top + 7.dp.toPx())
-    }
-    drawPath(lip, Color(0xFFBBD6E5).copy(alpha = 0.20f), style = Stroke(7.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-    drawPath(
-        lip,
-        Brush.horizontalGradient(
-            listOf(Color.White.copy(alpha = 0.76f), colorA.copy(alpha = 0.36f), Color.White.copy(alpha = 0.18f), colorB.copy(alpha = 0.40f), Color.White.copy(alpha = 0.72f)),
-            lipLeft,
-            spoutTip
-        ),
-        style = Stroke(2.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-    )
-    drawArc(
-        Color.White.copy(alpha = 0.34f),
-        188f,
-        158f,
-        false,
-        Offset(lipLeft + 3.dp.toPx(), top - 2.dp.toPx()),
-        Size(lipRight - lipLeft - 6.dp.toPx(), 8.dp.toPx()),
-        style = Stroke(1.dp.toPx(), cap = StrokeCap.Round)
-    )
-}
-
 private fun DrawScope.drawVesselDust(frame: VesselFrame) {
     val count = when (frame.quality) {
         ThemeRenderQuality.LOW -> 8
@@ -309,28 +238,6 @@ private fun DrawScope.drawVesselDust(frame: VesselFrame) {
         val x = size.width * ((pseudo(index, 0.19f) + frame.ambient * (0.012f + index % 3 * 0.004f)) % 1f)
         val y = size.height * pseudo(index, 0.81f)
         drawCircle(Color.White.copy(alpha = 0.06f + pseudo(index, 0.44f) * 0.12f), (0.6f + pseudo(index, 0.55f) * 1.3f).dp.toPx(), Offset(x, y))
-    }
-}
-
-private fun buildVesselPath(path: Path, centerX: Float, top: Float, bottom: Float, left: Float, right: Float): Path {
-    val width = right - left
-    val neckHalf = width * 0.20f
-    val height = bottom - top
-    return path.apply {
-        rewind()
-        moveTo(centerX - neckHalf, top + height * 0.025f)
-        lineTo(centerX - neckHalf * 0.96f, top + height * 0.13f)
-        cubicTo(left + width * 0.12f, top + height * 0.19f, left, top + height * 0.34f, left, top + height * 0.53f)
-        lineTo(left, bottom - height * 0.12f)
-        cubicTo(left, bottom - height * 0.035f, left + width * 0.13f, bottom, centerX - width * 0.02f, bottom)
-        cubicTo(right - width * 0.13f, bottom, right, bottom - height * 0.035f, right, bottom - height * 0.13f)
-        lineTo(right, top + height * 0.46f)
-        cubicTo(right, top + height * 0.30f, right - width * 0.07f, top + height * 0.20f, centerX + neckHalf, top + height * 0.14f)
-        lineTo(centerX + neckHalf * 1.04f, top + height * 0.07f)
-        quadraticTo(centerX + neckHalf * 2.08f, top + height * 0.055f, centerX + neckHalf * 2.74f, top - height * 0.018f)
-        quadraticTo(centerX + neckHalf * 2.22f, top + height * 0.10f, centerX + neckHalf * 0.92f, top + height * 0.105f)
-        lineTo(centerX - neckHalf, top + height * 0.06f)
-        close()
     }
 }
 
@@ -458,49 +365,6 @@ private fun DrawScope.drawLiquidVolumeDetail(
         Offset(left, liquidTop),
         Size(right - left, liquidHeight)
     )
-}
-
-private fun DrawScope.drawVesselHighlights(
-    frame: VesselFrame,
-    centerX: Float,
-    top: Float,
-    bottom: Float,
-    left: Float,
-    right: Float
-) {
-    val leftHighlight = frame.scratchPath.apply {
-        rewind()
-        moveTo(centerX - (right - left) * 0.18f, top + 14.dp.toPx())
-        cubicTo(left + 18.dp.toPx(), top + 72.dp.toPx(), left + 18.dp.toPx(), bottom - 72.dp.toPx(), left + 42.dp.toPx(), bottom - 28.dp.toPx())
-    }
-    drawPath(leftHighlight, Color.White.copy(alpha = 0.09f), style = Stroke(13.dp.toPx(), cap = StrokeCap.Round))
-    drawPath(leftHighlight, Color.White.copy(alpha = 0.44f), style = Stroke(2.4.dp.toPx(), cap = StrokeCap.Round))
-    val rightHighlight = frame.scratchPath.apply {
-        rewind()
-        moveTo(centerX + (right - left) * 0.20f, top + 20.dp.toPx())
-        cubicTo(right - 13.dp.toPx(), top + 74.dp.toPx(), right - 14.dp.toPx(), bottom - 82.dp.toPx(), right - 34.dp.toPx(), bottom - 42.dp.toPx())
-    }
-    drawPath(rightHighlight, Color.White.copy(alpha = 0.2f), style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
-    val prism = listOf(Color(0xFF68E7FF), Color(0xFF9C7BFF), Color(0xFFFF6BCB))
-    prism.forEachIndexed { index, color ->
-        val prismPath = frame.scratchPath.apply {
-            rewind()
-            moveTo(left + 25.dp.toPx() + index * 1.4.dp.toPx(), top + 82.dp.toPx())
-            cubicTo(
-                left + 8.dp.toPx(), top + 128.dp.toPx(),
-                left + 18.dp.toPx(), bottom - 94.dp.toPx(),
-                left + 34.dp.toPx() + index * 1.2.dp.toPx(), bottom - 62.dp.toPx()
-            )
-        }
-        drawPath(prismPath, color.copy(alpha = 0.11f), style = Stroke(1.15.dp.toPx(), cap = StrokeCap.Round))
-    }
-    repeat(10) { index ->
-        val x = left + (right - left) * (0.08f + pseudo(index, 0.41f) * 0.84f)
-        val y = top + (bottom - top) * (0.18f + pseudo(index, 0.87f) * 0.68f)
-        val radius = (0.55f + pseudo(index, 0.12f) * 1.2f).dp.toPx()
-        drawCircle(Color.White.copy(alpha = 0.18f), radius, Offset(x, y), style = Stroke(0.65.dp.toPx()))
-        drawCircle(Color.White.copy(alpha = 0.32f), radius * 0.22f, Offset(x - radius * 0.25f, y - radius * 0.28f))
-    }
 }
 
 private fun DrawScope.drawLiquidContribution(
