@@ -103,6 +103,16 @@ object PairingInviteCodec {
         MessageDigest.getInstance("SHA-256").digest(payload).copyOf(CHECKSUM_BYTES)
 }
 
+/** Finds a valid pairing code inside free text such as a chat message or a share. */
+object PairingInviteText {
+    private val candidate = Regex("nomisma1:[A-Za-z0-9_-]{16,}")
+
+    fun find(text: CharSequence?): String? =
+        text?.let { candidate.findAll(it).map { match -> match.value }.firstOrNull(::isValid) }
+
+    fun isValid(code: String): Boolean = runCatching { PairingInviteCodec.decode(code) }.isSuccess
+}
+
 data class PairingReadiness(
     val relayReady: Boolean,
     val identityReady: Boolean,

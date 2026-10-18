@@ -115,3 +115,25 @@ object OperationSequencePolicy {
         }
     }
 }
+
+/**
+ * Decides which unsynced local operations do not stop the device from adopting the ledger of a
+ * pairing invite. Only plain configuration qualifies: it can be dropped without losing anything
+ * the user entered, whereas an entry, category, tag or settlement would be lost for good.
+ */
+object PairingAdoptionPolicy {
+    private val discardableTypes = setOf(
+        OperationType.THEME_SET,
+        OperationType.PARTICIPANT_COLOR_SET,
+        OperationType.PARTICIPANT_NAME_SET,
+        OperationType.PARTICIPANT_THEME_IDENTITY_SET,
+        OperationType.LEDGER_METADATA_SET,
+        OperationType.LEDGER_CAPACITY_SET
+    )
+
+    fun isDiscardable(wireType: String): Boolean =
+        OperationType.entries.firstOrNull { it.wireValue == wireType } in discardableTypes
+
+    fun blocking(wireTypes: Collection<String>): List<String> =
+        wireTypes.distinct().filterNot(::isDiscardable)
+}

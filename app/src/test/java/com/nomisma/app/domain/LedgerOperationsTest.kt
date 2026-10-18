@@ -31,4 +31,33 @@ class LedgerOperationsTest {
 
         assertTrue(runCatching { LedgerOperation.fromWireJson(oversized) }.isFailure)
     }
+
+    @Test
+    fun pairingAdoptionOnlyDiscardsConfiguration() {
+        val configuration = listOf(
+            OperationType.THEME_SET,
+            OperationType.PARTICIPANT_NAME_SET,
+            OperationType.PARTICIPANT_COLOR_SET,
+            OperationType.PARTICIPANT_THEME_IDENTITY_SET,
+            OperationType.LEDGER_METADATA_SET,
+            OperationType.LEDGER_CAPACITY_SET
+        ).map(OperationType::wireValue)
+        assertTrue(PairingAdoptionPolicy.blocking(configuration).isEmpty())
+
+        val shared = listOf(
+            OperationType.ENTRY_CREATE,
+            OperationType.ENTRY_UPDATE,
+            OperationType.ENTRY_DELETE,
+            OperationType.CATEGORY_CREATE,
+            OperationType.TAG_CREATE,
+            OperationType.SETTLEMENT_ACCEPT
+        ).map(OperationType::wireValue)
+        assertEquals(shared, PairingAdoptionPolicy.blocking(configuration + shared + shared))
+    }
+
+    @Test
+    fun pairingAdoptionTreatsUnknownOperationTypesAsBlocking() {
+        assertEquals(listOf("future.type"), PairingAdoptionPolicy.blocking(listOf("theme.set", "future.type")))
+        assertTrue(PairingAdoptionPolicy.blocking(emptyList()).isEmpty())
+    }
 }

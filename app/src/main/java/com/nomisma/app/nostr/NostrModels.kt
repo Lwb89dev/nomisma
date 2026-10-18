@@ -228,7 +228,9 @@ data class RelayFilter(
     val kinds: List<Int> = emptyList(),
     val recipientPubkey: String? = null,
     val since: Long? = null,
-    val limit: Int? = null
+    val limit: Int? = null,
+    /** NIP-50 full-text query; only relays advertising NIP-50 understand it. */
+    val search: String? = null
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         if (authors.isNotEmpty()) put("authors", JSONArray(authors))
@@ -236,5 +238,6 @@ data class RelayFilter(
         recipientPubkey?.let { put("#p", JSONArray().put(it)) }
         since?.let { put("since", it) }
         limit?.let { put("limit", it) }
+        search?.let { put("search", it) }
     }
 }

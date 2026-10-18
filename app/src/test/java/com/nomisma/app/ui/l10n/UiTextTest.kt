@@ -50,4 +50,35 @@ class UiTextTest {
         }
         assertEquals("Da dividere 50/50", UiText.translate("Da dividere 50/50", "it"))
     }
+
+    @Test
+    fun inviteAndRecipientSearchLabelsAreTranslatedEverywhere() {
+        val keys = listOf(
+            "Nessun codice invito Nomisma trovato nel testo",
+            "Invito Nomisma per",
+            "Per accettare: copia questo messaggio e apri Nomisma, il codice viene riconosciuto da solo.",
+            "Destinatario",
+            "Profilo sconosciuto",
+            "Cambia",
+            "Cerca il destinatario",
+            "Nome profilo, nome@dominio o npub",
+            "La ricerca interroga relay pubblici. Puoi anche incollare la npub.",
+            "Ricerca in corso…",
+            "Ricerca non riuscita. Controlla la connessione e riprova.",
+            "Questa è la tua chiave: scegli l'altro partecipante.",
+            "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub.",
+            "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona.",
+            "verificato",
+            "non verificato"
+        )
+        // Spanish spells "recipient" exactly like Italian.
+        val sameAsItalian = setOf("es" to "Destinatario")
+        languages.forEach { language ->
+            keys.forEach { key ->
+                val translated = UiText.translate(key, language)
+                assertTrue("$language $key", translated.isNotBlank())
+                if (language to key !in sameAsItalian) assertNotEquals("$language $key", key, translated)
+            }
+        }
+    }
 }

@@ -41,6 +41,9 @@ class AmberSigner(
         activity.lifecycle.addObserver(this)
     }
 
+    /** Last identity Amber returned, without opening Amber. */
+    val knownPubkey: String? get() = identity?.pubkey
+
     override suspend fun getIdentity(): SignerIdentity {
         identity?.let { return it }
         return requestIdentity()

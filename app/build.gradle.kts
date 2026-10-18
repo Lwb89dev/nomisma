@@ -31,8 +31,8 @@ android {
         applicationId = "com.nomisma.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.1.2"
     }
 
     buildFeatures {
@@ -75,4 +75,6 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
+    // The Android stub of org.json throws on the JVM, so profile parsing needs the real one in unit tests.
+    testImplementation("org.json:json:20240303")
 }

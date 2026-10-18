@@ -21,6 +21,7 @@ import com.nomisma.app.domain.ExpenseParser
 import com.nomisma.app.domain.ExpensePolicy
 import com.nomisma.app.domain.OperationType
 import com.nomisma.app.domain.OperationSequencePolicy
+import com.nomisma.app.domain.PairingAdoptionPolicy
 import com.nomisma.app.domain.SequenceDisposition
 import com.nomisma.app.domain.SyncState
 import com.nomisma.app.theme.ThemeRegistry
@@ -231,6 +232,13 @@ class LocalLedgerRepository(context: Context) {
     }
 }
 
+private data class DefaultParticipant(val id: String, val name: String, val color: String, val avatar: String)
+
+private val DEFAULT_PARTICIPANTS = listOf(
+    DefaultParticipant("alice", "Alice", "#38E66B", "bear"),
+    DefaultParticipant("bob", "Bob", "#147DFF", "squirrel")
+)
+
 internal class NomismaDatabase(
     context: Context,
     passphrase: ByteArray
@@ -357,18 +365,10 @@ internal class NomismaDatabase(
         db.execSQL("CREATE INDEX idx_expense_tags_tag ON expense_tags(tag_id)")
         createOperationLog(db)
 
-        val ledger = ContentValues().apply {
-            put("id", ledgerId)
-            put("title", "Casa")
-            put("currency", "EUR")
-            put("capacity_minor", 100_000L)
-            put("theme_id", ThemeRegistry.VESSEL)
-            put("theme_version", 1)
-        }
+        val ledger = ledgerDefaults().apply { put("id", ledgerId) }
         db.insertOrThrow("ledgers", null, ledger)
         cachedLedgerId = ledgerId
-        insertParticipant(db, ledgerId, "alice", "Alice", "#38E66B", "bear")
-        insertParticipant(db, ledgerId, "bob", "Bob", "#147DFF", "squirrel")
+        DEFAULT_PARTICIPANTS.forEach { insertParticipant(db, ledgerId, it.id, it.name, it.color, it.avatar) }
         seedDefaultCategories(db)
         seedInitialCycle(db, System.currentTimeMillis(), initialCycleId(ledgerId))
     }
@@ -1014,8 +1014,8 @@ internal class NomismaDatabase(
             require(rowCount(db, "expenses") == 0L) {
                 "Il ledger locale contiene già delle spese e non può essere sostituito da un invito"
             }
-            require(rowCount(db, "ledger_operations") == 0L) {
-                "Il ledger locale contiene modifiche non sincronizzate e non può essere sostituito da un invito"
+            require(PairingAdoptionPolicy.blocking(localOperationTypes(db)).isEmpty()) {
+                "Il ledger locale contiene spese, categorie o tag non sincronizzati e non può essere sostituito da un invito"
             }
             require(rowCount(db, "tags") == 0L) {
                 "Il ledger locale contiene tag personalizzati e non può essere sostituito da un invito"
@@ -1041,6 +1041,14 @@ internal class NomismaDatabase(
                 !db.query("ledgers", arrayOf("id"), "id = ?", arrayOf(targetLedgerId), null, null, null, "1")
                     .use { it.moveToFirst() }
             ) { "Il ledger dell'invito esiste già" }
+
+            // Only configuration is left here (checked above). Its author is whoever this device
+            // was before pairing, which the invite may reassign, so publishing it would be
+            // rejected. It is dropped together with the local copy of that configuration.
+            if (rowCount(db, "ledger_operations") > 0L) {
+                db.delete("ledger_operations", "ledger_id = ?", arrayOf(currentLedgerId))
+                resetConfigurationToDefaults(db, currentLedgerId)
+            }
 
             val source = db.query(
                 "ledgers",
@@ -2470,6 +2478,40 @@ internal class NomismaDatabase(
             id.also { cachedLedgerId = it }
         }
     }
+
+    private fun ledgerDefaults() = ContentValues().apply {
+        put("title", "Casa")
+        put("currency", "EUR")
+        put("capacity_minor", 100_000L)
+        put("theme_id", ThemeRegistry.VESSEL)
+        put("theme_version", 1)
+    }
+
+    /**
+     * Puts the configuration back to what a fresh install has. The ledger the invite points to is
+     * the other device's defaults plus its own operations, so a local copy that kept unsynced
+     * edits would never converge with it.
+     */
+    private fun resetConfigurationToDefaults(db: SQLiteDatabase, ledgerId: String) {
+        db.update("ledgers", ledgerDefaults(), "id = ?", arrayOf(ledgerId))
+        DEFAULT_PARTICIPANTS.forEach { participant ->
+            db.update(
+                "participants",
+                ContentValues().apply {
+                    put("name", participant.name)
+                    put("color_hex", participant.color)
+                    put("avatar_id", participant.avatar)
+                },
+                "id = ? AND ledger_id = ?",
+                arrayOf(participant.id, ledgerId)
+            )
+        }
+    }
+
+    private fun localOperationTypes(db: SQLiteDatabase): List<String> =
+        db.rawQuery("SELECT DISTINCT operation_type FROM ledger_operations", null).use { cursor ->
+            buildList { while (cursor.moveToNext()) add(cursor.getString(0)) }
+        }
 
     private fun rowCount(db: SQLiteDatabase, table: String): Long =
         db.rawQuery("SELECT COUNT(*) FROM $table", null).use { cursor ->

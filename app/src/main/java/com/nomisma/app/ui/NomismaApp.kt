@@ -147,11 +147,11 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-private val Night = Color(0xFF090B11)
-private val Panel = Color(0xFF151923)
-private val PanelLight = Color(0xFF202634)
-private val Ink = Color(0xFFF4F6FA)
-private val Muted = Color(0xFF9BA5B7)
+internal val Night = Color(0xFF090B11)
+internal val Panel = Color(0xFF151923)
+internal val PanelLight = Color(0xFF202634)
+internal val Ink = Color(0xFFF4F6FA)
+internal val Muted = Color(0xFF9BA5B7)
 private const val DEFAULT_RELAY_URL = "wss://relay.damus.io"
 private const val LIGHTNING_ADDRESS = "lwb89@blink.sv"
 private const val APP_PREFERENCES = "nomisma_app"
@@ -901,12 +901,12 @@ private fun OnboardingArtwork(step: Int) {
 }
 
 @Composable
-private fun t(source: String): String {
+internal fun t(source: String): String {
     val language = LocalConfiguration.current.locales[0].language
     return UiText.translate(source, language)
 }
 
-private fun tr(source: String): String =
+internal fun tr(source: String): String =
     UiText.translate(source, java.util.Locale.getDefault().language)
 
 private fun openLightningDonation(context: Context): Boolean {
@@ -1071,6 +1071,9 @@ private fun SettingsScreen(
     }
     var recipientPubkey by rememberSaveable {
         mutableStateOf(syncPreferences.getString(KEY_RECIPIENT_PUBKEY, "").orEmpty())
+    }
+    var recipientLabel by remember(recipientPubkey) {
+        mutableStateOf(syncPreferences.recipientLabelFor(recipientPubkey.trim().lowercase()))
     }
     val defaultLocalParticipantId = participants.firstOrNull()?.id ?: "alice"
     val defaultRemoteParticipantId = participants.drop(1).firstOrNull()?.id ?: "bob"
@@ -1597,17 +1600,23 @@ private fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
-                OutlinedTextField(
-                    value = recipientPubkey,
-                    onValueChange = {
-                        recipientPubkey = it
-                        syncPreferences.edit().putString(KEY_RECIPIENT_PUBKEY, it).apply()
-                    },
-                    label = { Text(t("Chiave pubblica destinatario")) },
-                    placeholder = { Text(t("hex 64 caratteri")) },
-                    singleLine = true,
+                RecipientPicker(
+                    recipientPubkey = recipientPubkey,
+                    recipientLabel = recipientLabel,
+                    localPubkey = syncState.identity?.pubkey,
                     enabled = syncState.status == SyncConnectionStatus.DISCONNECTED,
-                    modifier = Modifier.fillMaxWidth()
+                    onSelected = { profile ->
+                        recipientPubkey = profile.pubkey
+                        recipientLabel = profile.takeIf { it.name != null || it.displayName != null }?.label
+                        syncPreferences.edit().putString(KEY_RECIPIENT_PUBKEY, profile.pubkey).apply()
+                        syncPreferences.saveRecipientLabel(profile.pubkey, recipientLabel)
+                    },
+                    onCleared = {
+                        recipientPubkey = ""
+                        recipientLabel = null
+                        syncPreferences.edit().putString(KEY_RECIPIENT_PUBKEY, "").apply()
+                        syncPreferences.saveRecipientLabel("", null)
+                    }
                 )
                 HorizontalDivider(color = PanelLight)
                 Text(t("Pairing"), color = Ink, fontWeight = FontWeight.SemiBold)
@@ -1630,7 +1639,8 @@ private fun SettingsScreen(
                         enabled = outgoingPairingCode != null,
                         onClick = {
                             outgoingPairingCode?.let { code ->
-                                val shareText = "Invito Nomisma per ${snapshot.title}\n\n$code"
+                                val shareText = "${tr("Invito Nomisma per")} ${snapshot.title}\n\n$code\n\n" +
+                                    tr("Per accettare: copia questo messaggio e apri Nomisma, il codice viene riconosciuto da solo.")
                                 val intent = Intent(Intent.ACTION_SEND).apply {
                                     type = "text/plain"
                                     putExtra(Intent.EXTRA_SUBJECT, "Pairing Nomisma")
@@ -1805,6 +1815,7 @@ private fun SettingsScreen(
                     pairingInput = ""
                     syncPreferences.edit()
                         .remove(KEY_RECIPIENT_PUBKEY)
+                        .remove(KEY_RECIPIENT_LABEL)
                         .remove(KEY_LOCAL_PARTICIPANT)
                         .remove(KEY_REMOTE_PARTICIPANT)
                         .putBoolean(KEY_AUTO_CONNECT, false)
