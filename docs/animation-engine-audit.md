@@ -12,7 +12,7 @@ Audit performed on `main` (commit `2800033`) before the `refactor/animation-moti
 | `app/src/main/java/com/nomisma/app/ui/theme/ThemeAssetRepository.kt` | Asset loading + `ThemeAssetPack` |
 | `app/src/main/java/com/nomisma/app/ui/theme/SceneMaterials.kt` | RuntimeShader brushes (API 33+) |
 | `app/src/main/java/com/nomisma/app/ui/NomismaViewModel.kt` | Owns the coordinator, publishes `themeEvents` |
-| `app/src/main/java/com/nomisma/app/ui/NomismaApp.kt` (`HomeScreen`) | Wires `NomismaThemeScene(state, events, onEventConsumed, onStaleEvents)` |
+| `app/src/main/java/com/nomisma/app/ui/NomismaApp.kt` (`HomeScreen`) | Wires `NomismaThemeScene(state, events, onEventConsumed)` (the `onStaleEvents` discard was removed in the rework) |
 
 ## Event flow (verified)
 

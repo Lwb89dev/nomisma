@@ -320,7 +320,6 @@ fun NomismaApp(
                         minerAppearances = minerAppearances,
                         themeEvents = themeEvents.pending,
                         onThemeEventConsumed = viewModel::consumeThemeEvent,
-                        onStaleThemeEvents = viewModel::reconcileStaleThemeEvents,
                         onSettle = { method, note ->
                             viewModel.settleCurrentCycle(localOperationAuthor(context, snapshot), method, note)
                         },
@@ -1974,7 +1973,6 @@ private fun HomeScreen(
     minerAppearances: Map<String, MinerAppearance>,
     themeEvents: List<com.nomisma.app.theme.ThemeEventEnvelope>,
     onThemeEventConsumed: (String) -> Unit,
-    onStaleThemeEvents: () -> Unit,
     onSettle: (SettlementMethod, String) -> Unit,
     onEditExpense: (Expense) -> Unit,
     onPublishPending: () -> Unit,
@@ -2042,8 +2040,7 @@ private fun HomeScreen(
             motionPreference = motionPreference,
             minerAppearances = minerAppearances,
             events = themeEvents,
-            onEventConsumed = onThemeEventConsumed,
-            onStaleEvents = onStaleThemeEvents
+            onEventConsumed = onThemeEventConsumed
         )
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
