@@ -33,14 +33,23 @@ data class UnsignedNostrEvent(
     val tags: List<NostrTag>,
     val content: String
 ) {
-    fun canonicalSerialization(pubkeyOverride: String = pubkey.orEmpty()): String = JSONArray().apply {
-        put(0)
-        put(pubkeyOverride)
-        put(createdAt)
-        put(kind)
-        put(JSONArray().apply { tags.forEach { put(it.toJson()) } })
-        put(content)
-    }.toString()
+    /**
+     * NIP-01 serialization hashed into the event id. Built by hand because
+     * Android's org.json escapes '/' as "\/", and base64 NIP-44 ciphertext
+     * almost always contains '/', so the id would differ from every other client.
+     */
+    fun canonicalSerialization(pubkeyOverride: String = pubkey.orEmpty()): String = buildString {
+        append("[0,")
+        append(NostrCanonicalJson.string(pubkeyOverride)).append(',')
+        append(createdAt).append(',')
+        append(kind).append(',')
+        append(tags.joinToString(",", "[", "]") { tag ->
+            tag.values.joinToString(",", "[", "]", transform = NostrCanonicalJson::string)
+        })
+        append(',')
+        append(NostrCanonicalJson.string(content))
+        append(']')
+    }
 
     fun toSignerJson(): String = JSONObject().apply {
         put("kind", kind)
@@ -129,6 +138,28 @@ data class NostrEvent(
                 content = json.getString("content"),
                 sig = json.getString("sig")
             )
+        }
+    }
+}
+
+/** JSON string escaping as NIP-01 and JSON.stringify do it: '/' and non-ASCII stay verbatim. */
+object NostrCanonicalJson {
+    fun string(value: String): String = buildString(value.length + 2) {
+        append('"')
+        value.forEach { appendEscaped(it) }
+        append('"')
+    }
+
+    private fun StringBuilder.appendEscaped(character: Char) {
+        when (character) {
+            '"' -> append("\\\"")
+            '\\' -> append("\\\\")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            '\b' -> append("\\b")
+            '\u000C' -> append("\\f")
+            else -> if (character < ' ') append("\\u%04x".format(character.code)) else append(character)
         }
     }
 }

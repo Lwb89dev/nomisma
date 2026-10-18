@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1 — 2026-10-18
+
+Sync fix. Devices must all be on 0.1.1: a 0.1.0 device cannot exchange operations with a 0.1.1 one.
+
+### Fixed
+
+- Sync between two devices never delivered anything. Event ids were hashed from JSON that Android escapes differently from the NIP-01 specification (`/` became `\/`), so Amber-signed events failed with "Event id does not match canonical event data" and events from other clients were dropped on arrival. Event serialization now follows NIP-01 exactly, and a test pins it against a reference computed outside Android.
+
 ## 0.1.0 — 2026-10-18
 
 First Nomisma release.

@@ -2,7 +2,7 @@
 
 Nomisma is an Android app for splitting and synchronizing expenses in a shared ledger. It is **local-first**: the ledger is stored on the device in SQLite, while operations can be published and received over Nostr using Amber as an external signer.
 
-Current application version: `0.1.0`. See [CHANGELOG.md](CHANGELOG.md).
+Current application version: `0.1.1`. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Current status
 
