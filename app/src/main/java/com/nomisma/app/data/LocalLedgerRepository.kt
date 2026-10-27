@@ -6,6 +6,9 @@ import net.zetetic.database.DatabaseErrorHandler
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 import net.zetetic.database.sqlcipher.SQLiteOpenHelper
 import com.nomisma.app.domain.Expense
+import com.nomisma.app.nostr.LedgerDigest
+import com.nomisma.app.nostr.LedgerDigestCalculator
+import com.nomisma.app.security.securePreferences
 import com.nomisma.app.domain.ExpenseCategory
 import com.nomisma.app.domain.ExpenseCategories
 import com.nomisma.app.domain.LedgerOperation
@@ -56,6 +59,7 @@ data class OperationStats(
 
 class LocalLedgerRepository(context: Context) {
     private val database = openEncryptedLedger(context.applicationContext)
+    private val syncTarget = context.applicationContext.securePreferences("nomisma_sync_target")
 
     suspend fun loadSnapshot(): LedgerSnapshot = withContext(Dispatchers.IO) {
         database.readSnapshot()
@@ -220,6 +224,35 @@ class LocalLedgerRepository(context: Context) {
         database.markOperationPublished(operationId, transportEventId)
     }
 
+    /**
+     * A published operation only reached the relay and recipient it was sent to. When either one
+     * changes (another relay, a re-paired device) the published history goes back to the outbox,
+     * and the receiver drops whatever it already has as a duplicate.
+     */
+    suspend fun requeueForSyncTarget(relayUrl: String, recipientPubkey: String): Int = withContext(Dispatchers.IO) {
+        val target = "$relayUrl|$recipientPubkey"
+        if (syncTarget.getString(KEY_SYNC_TARGET, null) == target) return@withContext 0
+        database.requeuePublishedOperations().also {
+            syncTarget.edit().putString(KEY_SYNC_TARGET, target).apply()
+        }
+    }
+
+    /** This device's view of the shared ledger, for the balance check with the other device. */
+    suspend fun ledgerDigest(authorId: String, reply: Boolean): LedgerDigest = withContext(Dispatchers.IO) {
+        LedgerDigestCalculator.compute(
+            snapshot = database.readSnapshot(),
+            frontier = database.readFrontier(),
+            authorId = authorId,
+            reply = reply,
+            nowMillis = System.currentTimeMillis()
+        )
+    }
+
+    /** The partner has not seen our operations after [sequence]: they go back to the outbox. */
+    suspend fun requeueOwnOperationsAfter(authorId: String, sequence: Long): Int = withContext(Dispatchers.IO) {
+        database.requeueOwnOperationsAfter(authorId, sequence)
+    }
+
     suspend fun pendingOperations(): List<LedgerOperation> = withContext(Dispatchers.IO) {
         database.readPendingOperations()
     }
@@ -231,6 +264,8 @@ class LocalLedgerRepository(context: Context) {
         database.applyRemoteOperation(operation, transportEventId)
     }
 }
+
+private const val KEY_SYNC_TARGET = "relay_and_recipient"
 
 private data class DefaultParticipant(val id: String, val name: String, val color: String, val avatar: String)
 
@@ -1468,6 +1503,37 @@ internal class NomismaDatabase(
             rejected = counts[SyncState.REJECTED] ?: 0
         )
     }
+
+    /**
+     * Vector clock of what this device has folded in: highest sequence per author. Deferred
+     * operations wait for a gap and are not part of the ledger yet, so they do not count.
+     */
+    fun readFrontier(): Map<String, Long> = readableDatabase.rawQuery(
+        "SELECT author_id, MAX(author_sequence) FROM ledger_operations WHERE sync_state != ? GROUP BY author_id",
+        arrayOf(SyncState.DEFERRED.name)
+    ).use { cursor ->
+        buildMap { while (cursor.moveToNext()) put(cursor.getString(0), cursor.getLong(1)) }
+    }
+
+    fun requeueOwnOperationsAfter(authorId: String, sequence: Long): Int = writableDatabase.update(
+        "ledger_operations",
+        ContentValues().apply {
+            put("sync_state", SyncState.OUTBOX.name)
+            putNull("transport_event_id")
+        },
+        "author_id = ? AND author_sequence > ? AND sync_state = ?",
+        arrayOf(authorId, sequence.toString(), SyncState.PUBLISHED.name)
+    )
+
+    fun requeuePublishedOperations(): Int = writableDatabase.update(
+        "ledger_operations",
+        ContentValues().apply {
+            put("sync_state", SyncState.OUTBOX.name)
+            putNull("transport_event_id")
+        },
+        "sync_state = ?",
+        arrayOf(SyncState.PUBLISHED.name)
+    )
 
     fun markOperationPublished(operationId: String, transportEventId: String) {
         val values = ContentValues().apply {

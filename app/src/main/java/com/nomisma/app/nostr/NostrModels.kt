@@ -1,6 +1,6 @@
 package com.nomisma.app.nostr
 
-import fr.acinq.secp256k1.Secp256k1Jni
+import fr.acinq.secp256k1.Secp256k1
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -168,6 +168,21 @@ object NostrKinds {
     const val LEDGER_OPERATION = 7777
     const val SEAL = 13
     const val GIFT_WRAP = 1059
+    const val LEDGER_CHECKPOINT = 7778
+    const val EPHEMERAL_GIFT_WRAP = 21059
+    const val CLIENT_AUTH = 22242
+}
+
+/** NIP-42 authentication event for one relay connection. */
+object RelayAuth {
+    fun unsignedEvent(relayUrl: String, challenge: String, nowSeconds: Long): UnsignedNostrEvent =
+        UnsignedNostrEvent(
+            pubkey = null,
+            createdAt = nowSeconds,
+            kind = NostrKinds.CLIENT_AUTH,
+            tags = listOf(NostrTag(listOf("relay", relayUrl)), NostrTag(listOf("challenge", challenge))),
+            content = ""
+        )
 }
 
 object NostrHash {
@@ -214,7 +229,7 @@ object NostrEventValidator {
     fun validate(event: NostrEvent): Result<Unit> = runCatching {
         validateShape(event).getOrThrow()
         require(
-            Secp256k1Jni.verifySchnorr(
+            Secp256k1.verifySchnorr(
                 NostrHex.decode(event.sig),
                 NostrHash.sha256(event.asUnsigned().canonicalSerialization(event.pubkey)),
                 NostrHex.decode(event.pubkey)

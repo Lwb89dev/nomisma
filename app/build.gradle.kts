@@ -31,8 +31,8 @@ android {
         applicationId = "com.nomisma.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 3
-        versionName = "0.1.2"
+        versionCode = 4
+        versionName = "0.1.3"
     }
 
     buildFeatures {
@@ -77,4 +77,6 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     // The Android stub of org.json throws on the JVM, so profile parsing needs the real one in unit tests.
     testImplementation("org.json:json:20240303")
+    // Real secp256k1 on the JVM, so signing, ECDH and Schnorr checks are tested against the native library.
+    testImplementation("fr.acinq.secp256k1:secp256k1-kmp-jni-jvm:0.24.0")
 }

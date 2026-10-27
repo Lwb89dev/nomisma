@@ -82,7 +82,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "No profile found. Try name@domain or paste the npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Several profiles can share the same name: pick the verified one and compare the npub with the other person.",
             "verificato" to "verified",
-            "non verificato" to "not verified"
+            "non verificato" to "not verified",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Public relay that delivers encrypted messages to their recipient.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "General public relay, compatible with encrypted messages.",
+            "Saldi verificati con l'altro dispositivo" to "Balances verified with the other device",
+            "Verifica dei saldi in corso" to "Checking balances",
+            "Riallineamento: operazioni mancanti reinviate" to "Realigning: missing operations sent again",
+            "I saldi non coincidono con l'altro dispositivo" to "Balances do not match the other device",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "The balance check starts when both devices are connected",
+            "Impronta del ledger" to "Ledger fingerprint"
         ),
         "de" to mapOf(
             "Da dividere 50/50" to "50/50 teilen",
@@ -107,7 +115,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Kein Profil gefunden. Versuche name@domain oder füge die npub ein.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Mehrere Profile können denselben Namen haben: Wähle das verifizierte und vergleiche die npub mit der anderen Person.",
             "verificato" to "verifiziert",
-            "non verificato" to "nicht verifiziert"
+            "non verificato" to "nicht verifiziert",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Öffentliches Relay, das verschlüsselte Nachrichten an den Empfänger ausliefert.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Allgemeines öffentliches Relay, kompatibel mit verschlüsselten Nachrichten.",
+            "Saldi verificati con l'altro dispositivo" to "Salden mit dem anderen Gerät geprüft",
+            "Verifica dei saldi in corso" to "Salden werden geprüft",
+            "Riallineamento: operazioni mancanti reinviate" to "Abgleich: fehlende Vorgänge erneut gesendet",
+            "I saldi non coincidono con l'altro dispositivo" to "Die Salden stimmen nicht mit dem anderen Gerät überein",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Die Saldenprüfung startet, wenn beide Geräte verbunden sind",
+            "Impronta del ledger" to "Fingerabdruck des Ledgers"
         ),
         "fr" to mapOf(
             "Da dividere 50/50" to "À partager 50/50",
@@ -132,7 +148,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Aucun profil trouvé. Essaie nom@domaine ou colle la npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Plusieurs profils peuvent avoir le même nom : choisis celui qui est vérifié et compare la npub avec l'autre personne.",
             "verificato" to "vérifié",
-            "non verificato" to "non vérifié"
+            "non verificato" to "non vérifié",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Relais public qui remet les messages chiffrés à leur destinataire.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Relais public généraliste, compatible avec les messages chiffrés.",
+            "Saldi verificati con l'altro dispositivo" to "Soldes vérifiés avec l'autre appareil",
+            "Verifica dei saldi in corso" to "Vérification des soldes en cours",
+            "Riallineamento: operazioni mancanti reinviate" to "Réalignement : opérations manquantes renvoyées",
+            "I saldi non coincidono con l'altro dispositivo" to "Les soldes ne correspondent pas à l'autre appareil",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "La vérification des soldes démarre quand les deux appareils sont connectés",
+            "Impronta del ledger" to "Empreinte du registre"
         ),
         "es" to mapOf(
             "Da dividere 50/50" to "A dividir 50/50",
@@ -157,7 +181,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "No se encontró ningún perfil. Prueba con nombre@dominio o pega la npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Varios perfiles pueden tener el mismo nombre: elige el verificado y compara la npub con la otra persona.",
             "verificato" to "verificado",
-            "non verificato" to "no verificado"
+            "non verificato" to "no verificado",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Relay público que entrega los mensajes cifrados a su destinatario.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Relay público generalista, compatible con mensajes cifrados.",
+            "Saldi verificati con l'altro dispositivo" to "Saldos verificados con el otro dispositivo",
+            "Verifica dei saldi in corso" to "Verificando saldos",
+            "Riallineamento: operazioni mancanti reinviate" to "Realineando: operaciones que faltaban reenviadas",
+            "I saldi non coincidono con l'altro dispositivo" to "Los saldos no coinciden con el otro dispositivo",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "La verificación de saldos empieza cuando ambos dispositivos están conectados",
+            "Impronta del ledger" to "Huella del libro"
         ),
         "pt" to mapOf(
             "Da dividere 50/50" to "A dividir 50/50",
@@ -182,7 +214,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Nenhum perfil encontrado. Tenta nome@domínio ou cola a npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Vários perfis podem ter o mesmo nome: escolhe o verificado e compara a npub com a outra pessoa.",
             "verificato" to "verificado",
-            "non verificato" to "não verificado"
+            "non verificato" to "não verificado",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Relay público que entrega as mensagens cifradas ao destinatário.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Relay público generalista, compatível com mensagens cifradas.",
+            "Saldi verificati con l'altro dispositivo" to "Saldos verificados com o outro dispositivo",
+            "Verifica dei saldi in corso" to "A verificar saldos",
+            "Riallineamento: operazioni mancanti reinviate" to "Realinhamento: operações em falta reenviadas",
+            "I saldi non coincidono con l'altro dispositivo" to "Os saldos não coincidem com o outro dispositivo",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "A verificação dos saldos começa quando ambos os dispositivos estão ligados",
+            "Impronta del ledger" to "Impressão digital do registo"
         ),
         "nl" to mapOf(
             "Da dividere 50/50" to "50/50 verdelen",
@@ -207,7 +247,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Geen profiel gevonden. Probeer naam@domein of plak de npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Meerdere profielen kunnen dezelfde naam hebben: kies het geverifieerde profiel en vergelijk de npub met de ander.",
             "verificato" to "geverifieerd",
-            "non verificato" to "niet geverifieerd"
+            "non verificato" to "niet geverifieerd",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Openbare relay die versleutelde berichten aan de ontvanger aflevert.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Algemene openbare relay, compatibel met versleutelde berichten.",
+            "Saldi verificati con l'altro dispositivo" to "Saldi geverifieerd met het andere apparaat",
+            "Verifica dei saldi in corso" to "Saldi worden gecontroleerd",
+            "Riallineamento: operazioni mancanti reinviate" to "Herstel: ontbrekende bewerkingen opnieuw verzonden",
+            "I saldi non coincidono con l'altro dispositivo" to "De saldi komen niet overeen met het andere apparaat",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "De saldocontrole start wanneer beide apparaten verbonden zijn",
+            "Impronta del ledger" to "Vingerafdruk van het grootboek"
         ),
         "pl" to mapOf(
             "Da dividere 50/50" to "Do podziału 50/50",
@@ -232,7 +280,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Nie znaleziono profilu. Spróbuj nazwa@domena lub wklej npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Kilka profili może mieć tę samą nazwę: wybierz zweryfikowany i porównaj npub z drugą osobą.",
             "verificato" to "zweryfikowany",
-            "non verificato" to "niezweryfikowany"
+            "non verificato" to "niezweryfikowany",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Publiczny przekaźnik, który dostarcza zaszyfrowane wiadomości odbiorcy.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Ogólny publiczny przekaźnik, zgodny z zaszyfrowanymi wiadomościami.",
+            "Saldi verificati con l'altro dispositivo" to "Salda zweryfikowane z drugim urządzeniem",
+            "Verifica dei saldi in corso" to "Sprawdzanie sald",
+            "Riallineamento: operazioni mancanti reinviate" to "Wyrównywanie: brakujące operacje wysłane ponownie",
+            "I saldi non coincidono con l'altro dispositivo" to "Salda nie zgadzają się z drugim urządzeniem",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Weryfikacja sald startuje, gdy oba urządzenia są połączone",
+            "Impronta del ledger" to "Odcisk księgi"
         ),
         "sv" to mapOf(
             "Da dividere 50/50" to "Dela 50/50",
@@ -257,7 +313,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Ingen profil hittades. Prova namn@domän eller klistra in npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Flera profiler kan ha samma namn: välj den verifierade och jämför npub med den andra personen.",
             "verificato" to "verifierad",
-            "non verificato" to "ej verifierad"
+            "non verificato" to "ej verifierad",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Offentlig relä som levererar krypterade meddelanden till mottagaren.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Allmän offentlig relä, kompatibel med krypterade meddelanden.",
+            "Saldi verificati con l'altro dispositivo" to "Saldon verifierade med den andra enheten",
+            "Verifica dei saldi in corso" to "Saldon kontrolleras",
+            "Riallineamento: operazioni mancanti reinviate" to "Återsynk: saknade åtgärder skickade igen",
+            "I saldi non coincidono con l'altro dispositivo" to "Saldona stämmer inte med den andra enheten",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Saldokontrollen startar när båda enheterna är anslutna",
+            "Impronta del ledger" to "Liggarens fingeravtryck"
         ),
         "da" to mapOf(
             "Da dividere 50/50" to "Del 50/50",
@@ -282,7 +346,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Ingen profil fundet. Prøv navn@domæne, eller indsæt npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Flere profiler kan have samme navn: vælg den verificerede, og sammenlign npub med den anden person.",
             "verificato" to "verificeret",
-            "non verificato" to "ikke verificeret"
+            "non verificato" to "ikke verificeret",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Offentlig relay, der leverer krypterede beskeder til modtageren.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Generel offentlig relay, kompatibel med krypterede beskeder.",
+            "Saldi verificati con l'altro dispositivo" to "Saldi bekræftet med den anden enhed",
+            "Verifica dei saldi in corso" to "Saldi kontrolleres",
+            "Riallineamento: operazioni mancanti reinviate" to "Gensynkronisering: manglende handlinger sendt igen",
+            "I saldi non coincidono con l'altro dispositivo" to "Saldiene stemmer ikke med den anden enhed",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Saldokontrollen starter, når begge enheder er forbundet",
+            "Impronta del ledger" to "Regnskabets fingeraftryk"
         ),
         "fi" to mapOf(
             "Da dividere 50/50" to "Jaetaan 50/50",
@@ -307,7 +379,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Profiilia ei löytynyt. Kokeile nimi@verkkotunnus tai liitä npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Usealla profiililla voi olla sama nimi: valitse vahvistettu ja vertaa npub-avainta toisen henkilön kanssa.",
             "verificato" to "vahvistettu",
-            "non verificato" to "vahvistamaton"
+            "non verificato" to "vahvistamaton",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Julkinen rele, joka toimittaa salatut viestit vastaanottajalle.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Yleinen julkinen rele, yhteensopiva salattujen viestien kanssa.",
+            "Saldi verificati con l'altro dispositivo" to "Saldot vahvistettu toisen laitteen kanssa",
+            "Verifica dei saldi in corso" to "Saldoja tarkistetaan",
+            "Riallineamento: operazioni mancanti reinviate" to "Uudelleenkohdistus: puuttuvat toiminnot lähetetty uudelleen",
+            "I saldi non coincidono con l'altro dispositivo" to "Saldot eivät täsmää toisen laitteen kanssa",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Saldojen tarkistus alkaa, kun molemmat laitteet ovat yhteydessä",
+            "Impronta del ledger" to "Kirjanpidon sormenjälki"
         ),
         "cs" to mapOf(
             "Da dividere 50/50" to "Rozdělit 50/50",
@@ -332,7 +412,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Profil nenalezen. Zkus jméno@doména nebo vlož npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Více profilů může mít stejné jméno: vyber ověřený a porovnej npub s druhou osobou.",
             "verificato" to "ověřeno",
-            "non verificato" to "neověřeno"
+            "non verificato" to "neověřeno",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Veřejný relay, který doručuje šifrované zprávy příjemci.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Obecný veřejný relay, kompatibilní se šifrovanými zprávami.",
+            "Saldi verificati con l'altro dispositivo" to "Zůstatky ověřeny s druhým zařízením",
+            "Verifica dei saldi in corso" to "Probíhá kontrola zůstatků",
+            "Riallineamento: operazioni mancanti reinviate" to "Vyrovnání: chybějící operace odeslány znovu",
+            "I saldi non coincidono con l'altro dispositivo" to "Zůstatky nesouhlasí s druhým zařízením",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Kontrola zůstatků začne, když jsou obě zařízení připojena",
+            "Impronta del ledger" to "Otisk knihy"
         ),
         "sk" to mapOf(
             "Da dividere 50/50" to "Rozdeliť 50/50",
@@ -357,7 +445,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Profil sa nenašiel. Skús meno@doména alebo vlož npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Viac profilov môže mať rovnaké meno: vyber overený a porovnaj npub s druhou osobou.",
             "verificato" to "overené",
-            "non verificato" to "neoverené"
+            "non verificato" to "neoverené",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Verejný relay, ktorý doručuje šifrované správy príjemcovi.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Všeobecný verejný relay, kompatibilný so šifrovanými správami.",
+            "Saldi verificati con l'altro dispositivo" to "Zostatky overené s druhým zariadením",
+            "Verifica dei saldi in corso" to "Prebieha kontrola zostatkov",
+            "Riallineamento: operazioni mancanti reinviate" to "Vyrovnanie: chýbajúce operácie odoslané znova",
+            "I saldi non coincidono con l'altro dispositivo" to "Zostatky nesúhlasia s druhým zariadením",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Kontrola zostatkov sa začne, keď sú obe zariadenia pripojené",
+            "Impronta del ledger" to "Odtlačok knihy"
         ),
         "sl" to mapOf(
             "Da dividere 50/50" to "Deliti 50/50",
@@ -382,7 +478,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Profila ni mogoče najti. Poskusi ime@domena ali prilepi npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Več profilov ima lahko isto ime: izberi preverjenega in primerjaj npub z drugo osebo.",
             "verificato" to "preverjeno",
-            "non verificato" to "nepreverjeno"
+            "non verificato" to "nepreverjeno",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Javni relay, ki šifrirana sporočila dostavi prejemniku.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Splošni javni relay, združljiv s šifriranimi sporočili.",
+            "Saldi verificati con l'altro dispositivo" to "Stanja preverjena z drugo napravo",
+            "Verifica dei saldi in corso" to "Preverjanje stanj",
+            "Riallineamento: operazioni mancanti reinviate" to "Usklajevanje: manjkajoče operacije znova poslane",
+            "I saldi non coincidono con l'altro dispositivo" to "Stanja se ne ujemajo z drugo napravo",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Preverjanje stanj se začne, ko sta obe napravi povezani",
+            "Impronta del ledger" to "Prstni odtis knjige"
         ),
         "hr" to mapOf(
             "Da dividere 50/50" to "Podijeliti 50/50",
@@ -407,7 +511,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Profil nije pronađen. Pokušaj ime@domena ili zalijepi npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Više profila može imati isto ime: odaberi provjereni i usporedi npub s drugom osobom.",
             "verificato" to "provjereno",
-            "non verificato" to "neprovjereno"
+            "non verificato" to "neprovjereno",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Javni relay koji šifrirane poruke dostavlja primatelju.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Opći javni relay, kompatibilan sa šifriranim porukama.",
+            "Saldi verificati con l'altro dispositivo" to "Salda provjerena s drugim uređajem",
+            "Verifica dei saldi in corso" to "Provjera salda u tijeku",
+            "Riallineamento: operazioni mancanti reinviate" to "Usklađivanje: nedostajuće operacije ponovno poslane",
+            "I saldi non coincidono con l'altro dispositivo" to "Salda se ne podudaraju s drugim uređajem",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Provjera salda počinje kada su oba uređaja povezana",
+            "Impronta del ledger" to "Otisak knjige"
         ),
         "bg" to mapOf(
             "Da dividere 50/50" to "За делене 50/50",
@@ -432,7 +544,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Не е намерен профил. Опитай име@домейн или постави npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Няколко профила може да имат едно и също име: избери потвърдения и сравни npub с другия човек.",
             "verificato" to "потвърден",
-            "non verificato" to "непотвърден"
+            "non verificato" to "непотвърден",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Публично реле, което доставя шифрованите съобщения до получателя.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Общо публично реле, съвместимо с шифровани съобщения.",
+            "Saldi verificati con l'altro dispositivo" to "Салдата са проверени с другото устройство",
+            "Verifica dei saldi in corso" to "Проверка на салдата",
+            "Riallineamento: operazioni mancanti reinviate" to "Изравняване: липсващите операции са изпратени отново",
+            "I saldi non coincidono con l'altro dispositivo" to "Салдата не съвпадат с другото устройство",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Проверката на салдата започва, когато и двете устройства са свързани",
+            "Impronta del ledger" to "Отпечатък на книгата"
         ),
         "el" to mapOf(
             "Da dividere 50/50" to "Διαίρεση 50/50",
@@ -457,7 +577,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Δεν βρέθηκε προφίλ. Δοκίμασε όνομα@τομέας ή επικόλλησε το npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Πολλά προφίλ μπορεί να έχουν το ίδιο όνομα: διάλεξε το επαληθευμένο και σύγκρινε το npub με το άλλο άτομο.",
             "verificato" to "επαληθευμένο",
-            "non verificato" to "μη επαληθευμένο"
+            "non verificato" to "μη επαληθευμένο",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Δημόσιο relay που παραδίδει τα κρυπτογραφημένα μηνύματα στον παραλήπτη.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Γενικό δημόσιο relay, συμβατό με κρυπτογραφημένα μηνύματα.",
+            "Saldi verificati con l'altro dispositivo" to "Τα υπόλοιπα επαληθεύτηκαν με την άλλη συσκευή",
+            "Verifica dei saldi in corso" to "Έλεγχος υπολοίπων",
+            "Riallineamento: operazioni mancanti reinviate" to "Ευθυγράμμιση: οι λειτουργίες που έλειπαν στάλθηκαν ξανά",
+            "I saldi non coincidono con l'altro dispositivo" to "Τα υπόλοιπα δεν ταιριάζουν με την άλλη συσκευή",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Ο έλεγχος υπολοίπων ξεκινά όταν και οι δύο συσκευές είναι συνδεδεμένες",
+            "Impronta del ledger" to "Αποτύπωμα καθολικού"
         ),
         "hu" to mapOf(
             "Da dividere 50/50" to "50/50 arányban osztandó",
@@ -482,7 +610,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Nem található profil. Próbáld a név@domain formát, vagy illeszd be az npub-ot.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Több profilnak is lehet ugyanaz a neve: válaszd az ellenőrzöttet, és hasonlítsd össze az npub-ot a másik személlyel.",
             "verificato" to "ellenőrzött",
-            "non verificato" to "nem ellenőrzött"
+            "non verificato" to "nem ellenőrzött",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Nyilvános relay, amely a titkosított üzeneteket a címzetthez juttatja.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Általános nyilvános relay, titkosított üzenetekkel kompatibilis.",
+            "Saldi verificati con l'altro dispositivo" to "Egyenlegek ellenőrizve a másik eszközzel",
+            "Verifica dei saldi in corso" to "Egyenlegek ellenőrzése",
+            "Riallineamento: operazioni mancanti reinviate" to "Újraigazítás: a hiányzó műveletek újraküldve",
+            "I saldi non coincidono con l'altro dispositivo" to "Az egyenlegek nem egyeznek a másik eszközzel",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Az egyenleg-ellenőrzés akkor indul, ha mindkét eszköz csatlakozik",
+            "Impronta del ledger" to "Főkönyv ujjlenyomata"
         ),
         "ro" to mapOf(
             "Da dividere 50/50" to "De împărțit 50/50",
@@ -507,7 +643,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Niciun profil găsit. Încearcă nume@domeniu sau lipește npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Mai multe profiluri pot avea același nume: alege-l pe cel verificat și compară npub cu cealaltă persoană.",
             "verificato" to "verificat",
-            "non verificato" to "neverificat"
+            "non verificato" to "neverificat",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Relay public care livrează mesajele criptate destinatarului.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Relay public general, compatibil cu mesajele criptate.",
+            "Saldi verificati con l'altro dispositivo" to "Solduri verificate cu celălalt dispozitiv",
+            "Verifica dei saldi in corso" to "Se verifică soldurile",
+            "Riallineamento: operazioni mancanti reinviate" to "Realiniere: operațiunile lipsă au fost retrimise",
+            "I saldi non coincidono con l'altro dispositivo" to "Soldurile nu coincid cu celălalt dispozitiv",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Verificarea soldurilor pornește când ambele dispozitive sunt conectate",
+            "Impronta del ledger" to "Amprenta registrului"
         ),
         "et" to mapOf(
             "Da dividere 50/50" to "Jagada 50/50",
@@ -532,7 +676,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Profiili ei leitud. Proovi nimi@domeen või kleebi npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Mitmel profiilil võib olla sama nimi: vali kinnitatud profiil ja võrdle npub-i teise inimesega.",
             "verificato" to "kinnitatud",
-            "non verificato" to "kinnitamata"
+            "non verificato" to "kinnitamata",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Avalik relee, mis toimetab krüpteeritud sõnumid saajale.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Üldine avalik relee, ühilduv krüpteeritud sõnumitega.",
+            "Saldi verificati con l'altro dispositivo" to "Saldod kinnitatud teise seadmega",
+            "Verifica dei saldi in corso" to "Saldosid kontrollitakse",
+            "Riallineamento: operazioni mancanti reinviate" to "Joondamine: puuduvad toimingud saadeti uuesti",
+            "I saldi non coincidono con l'altro dispositivo" to "Saldod ei klapi teise seadmega",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Saldode kontroll algab, kui mõlemad seadmed on ühendatud",
+            "Impronta del ledger" to "Pearaamatu sõrmejälg"
         ),
         "lv" to mapOf(
             "Da dividere 50/50" to "Dalīt 50/50",
@@ -557,7 +709,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Profils nav atrasts. Mēģini vārds@domēns vai ielīmē npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Vairākiem profiliem var būt viens un tas pats vārds: izvēlies pārbaudīto un salīdzini npub ar otru personu.",
             "verificato" to "pārbaudīts",
-            "non verificato" to "nepārbaudīts"
+            "non verificato" to "nepārbaudīts",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Publisks relejs, kas piegādā šifrētas ziņas saņēmējam.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Vispārējs publisks relejs, saderīgs ar šifrētām ziņām.",
+            "Saldi verificati con l'altro dispositivo" to "Atlikumi pārbaudīti ar otru ierīci",
+            "Verifica dei saldi in corso" to "Notiek atlikumu pārbaude",
+            "Riallineamento: operazioni mancanti reinviate" to "Izlīdzināšana: trūkstošās darbības nosūtītas vēlreiz",
+            "I saldi non coincidono con l'altro dispositivo" to "Atlikumi nesakrīt ar otru ierīci",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Atlikumu pārbaude sākas, kad abas ierīces ir savienotas",
+            "Impronta del ledger" to "Virsgrāmatas nospiedums"
         ),
         "lt" to mapOf(
             "Da dividere 50/50" to "Dalinti 50/50",
@@ -582,7 +742,15 @@ internal object UiText {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub." to "Profilio nerasta. Išbandyk vardas@domenas arba įklijuok npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona." to "Keli profiliai gali turėti tą patį vardą: rinkis patvirtintą ir palygink npub su kitu žmogumi.",
             "verificato" to "patvirtintas",
-            "non verificato" to "nepatvirtintas"
+            "non verificato" to "nepatvirtintas",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario." to "Viešoji relė, kuri pristato užšifruotas žinutes gavėjui.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati." to "Bendra viešoji relė, suderinama su užšifruotomis žinutėmis.",
+            "Saldi verificati con l'altro dispositivo" to "Likučiai patikrinti su kitu įrenginiu",
+            "Verifica dei saldi in corso" to "Tikrinami likučiai",
+            "Riallineamento: operazioni mancanti reinviate" to "Suderinimas: trūkstamos operacijos išsiųstos iš naujo",
+            "I saldi non coincidono con l'altro dispositivo" to "Likučiai nesutampa su kitu įrenginiu",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi" to "Likučių patikra prasideda, kai abu įrenginiai prisijungę",
+            "Impronta del ledger" to "Knygos piršto atspaudas"
         )
     )
 }

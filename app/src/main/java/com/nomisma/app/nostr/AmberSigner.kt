@@ -11,17 +11,27 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+/**
+ * NIP-55 signer backed by Amber. Requests first go through Amber's content provider, which
+ * answers in the background once the user has allowed an action; only when it declines does
+ * Nomisma open Amber's screen. Screen requests run one at a time, so a result that comes back
+ * without its id (Amber closed or cancelled) still reaches the request that is waiting for it.
+ */
 class AmberSigner(
     private val activity: ComponentActivity
 ) : Signer, DefaultLifecycleObserver {
     private val preferences = activity.securePreferences("nomisma_signer")
-    private val pending = ConcurrentHashMap<String, CancellableContinuation<ActivityResult>>()
+    private val screenRequests = Mutex()
+    private var inFlight: CancellableContinuation<ActivityResult>? = null
     private var identity: SignerIdentity? = preferences.getString(KEY_PUBKEY, null)
         ?.trim()
         ?.lowercase()
@@ -32,8 +42,9 @@ class AmberSigner(
         activity,
         ActivityResultContracts.StartActivityForResult(),
         ActivityResultCallback { result ->
-            val id = result.data?.getStringExtra("id")
-            if (id != null) pending.remove(id)?.resume(result)
+            val waiting = inFlight
+            inFlight = null
+            waiting?.resume(result)
         }
     )
 
@@ -82,17 +93,40 @@ class AmberSigner(
 
     override suspend fun signEvent(event: UnsignedNostrEvent): NostrEvent {
         val signerIdentity = getIdentity()
+        val payload = event.copy(pubkey = signerIdentity.pubkey).toSignerJson()
+        val background = queryProvider(
+            signerIdentity,
+            "SIGN_EVENT",
+            arrayOf(payload, "", signerIdentity.pubkey),
+            listOf("event", "result")
+        )
+        if (background != null) {
+            return signedEvent(event, signerIdentity, background["event"], background["result"])
+        }
+
         val response = request(
             type = "sign_event",
-            payload = event.copy(pubkey = signerIdentity.pubkey).toSignerJson(),
+            payload = payload,
             packageName = signerIdentity.packageName,
             currentUser = signerIdentity.pubkey
         )
         check(response.resultCode == Activity.RESULT_OK) { "Amber failed to sign event" }
         check(response.data?.getBooleanExtra("rejected", false) != true) { "Amber signing request rejected" }
+        return signedEvent(
+            event,
+            signerIdentity,
+            response.data?.getStringExtra("event"),
+            response.data?.getStringExtra("result")
+        )
+    }
 
-        val returnedEventJson = response.data?.getStringExtra("event")
-            ?: response.data?.getStringExtra("result")?.takeIf { it.trimStart().startsWith("{") }
+    private fun signedEvent(
+        event: UnsignedNostrEvent,
+        signerIdentity: SignerIdentity,
+        returnedEvent: String?,
+        result: String?
+    ): NostrEvent {
+        val returnedEventJson = returnedEvent ?: result?.takeIf { it.trimStart().startsWith("{") }
         if (returnedEventJson != null) {
             return SignerResponseValidator.requireMatchesRequest(
                 requested = event,
@@ -101,8 +135,7 @@ class AmberSigner(
             )
         }
 
-        val signature = response.data?.getStringExtra("result")
-            ?: error("Amber did not return a signature or event")
+        val signature = result ?: error("Amber did not return a signature or event")
         val signedEvent = event.copy(pubkey = signerIdentity.pubkey)
         return NostrEvent(
             id = NostrHash.sha256Hex(signedEvent.canonicalSerialization(signerIdentity.pubkey)),
@@ -117,6 +150,9 @@ class AmberSigner(
 
     override suspend fun nip44Encrypt(plaintext: String, recipientPubkey: String): String {
         val signerIdentity = getIdentity()
+        queryProvider(signerIdentity, "NIP44_ENCRYPT", arrayOf(plaintext, recipientPubkey, signerIdentity.pubkey), listOf("result"))
+            ?.get("result")
+            ?.let { return it }
         val response = request("nip44_encrypt", plaintext, signerIdentity.packageName, recipientPubkey, signerIdentity.pubkey)
         check(response.resultCode == Activity.RESULT_OK) { "Amber failed to encrypt" }
         check(response.data?.getBooleanExtra("rejected", false) != true) { "Amber encryption request rejected" }
@@ -125,10 +161,40 @@ class AmberSigner(
 
     override suspend fun nip44Decrypt(ciphertext: String, senderPubkey: String): String {
         val signerIdentity = getIdentity()
+        queryProvider(signerIdentity, "NIP44_DECRYPT", arrayOf(ciphertext, senderPubkey, signerIdentity.pubkey), listOf("result"))
+            ?.get("result")
+            ?.let { return it }
         val response = request("nip44_decrypt", ciphertext, signerIdentity.packageName, senderPubkey, signerIdentity.pubkey)
         check(response.resultCode == Activity.RESULT_OK) { "Amber failed to decrypt" }
         check(response.data?.getBooleanExtra("rejected", false) != true) { "Amber decryption request rejected" }
         return response.data?.getStringExtra("result") ?: error("Amber did not return plaintext")
+    }
+
+    /**
+     * NIP-55 background path. Returns null whenever Amber does not answer silently (no remembered
+     * permission, rejected, old Amber), so the caller falls back to Amber's screen.
+     */
+    private suspend fun queryProvider(
+        signerIdentity: SignerIdentity,
+        action: String,
+        arguments: Array<String>,
+        columns: List<String>
+    ): Map<String, String>? {
+        val packageName = signerIdentity.packageName.takeIf(String::isNotBlank) ?: return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                activity.contentResolver
+                    .query(Uri.parse("content://$packageName.$action"), arguments, null, null, null)
+                    ?.use { cursor ->
+                        if (!cursor.moveToFirst() || cursor.getColumnIndex("rejected") >= 0) return@use null
+                        columns.mapNotNull { column ->
+                            cursor.getColumnIndex(column).takeIf { it >= 0 }
+                                ?.let(cursor::getString)
+                                ?.let { column to it }
+                        }.toMap().takeIf { it.isNotEmpty() }
+                    }
+            }.getOrNull()
+        }
     }
 
     private suspend fun request(
@@ -137,29 +203,30 @@ class AmberSigner(
         packageName: String?,
         otherPubkey: String? = null,
         currentUser: String? = null
-    ): ActivityResult = suspendCancellableCoroutine { continuation ->
-        val id = UUID.randomUUID().toString()
-        pending[id] = continuation
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:${Uri.encode(payload)}")).apply {
-            packageName?.takeIf(String::isNotBlank)?.let { `package` = it }
-            putExtra("type", type)
-            putExtra("id", id)
-            otherPubkey?.let { putExtra("pubkey", it) }
-            currentUser?.let { putExtra("current_user", it) }
-        }
-        continuation.invokeOnCancellation { pending.remove(id) }
-        runCatching { launcher.launch(intent) }
-            .onFailure { failure ->
-                pending.remove(id)
-                continuation.resumeWithException(
-                    IllegalStateException("Amber non è disponibile o non può gestire la richiesta", failure)
-                )
+    ): ActivityResult = screenRequests.withLock {
+        suspendCancellableCoroutine { continuation ->
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:${Uri.encode(payload)}")).apply {
+                packageName?.takeIf(String::isNotBlank)?.let { `package` = it }
+                putExtra("type", type)
+                putExtra("id", UUID.randomUUID().toString())
+                otherPubkey?.let { putExtra("pubkey", it) }
+                currentUser?.let { putExtra("current_user", it) }
             }
+            inFlight = continuation
+            continuation.invokeOnCancellation { if (inFlight === continuation) inFlight = null }
+            runCatching { launcher.launch(intent) }
+                .onFailure { failure ->
+                    inFlight = null
+                    continuation.resumeWithException(
+                        IllegalStateException("Amber non è disponibile o non può gestire la richiesta", failure)
+                    )
+                }
+        }
     }
 
     override fun onDestroy(owner: LifecycleOwner) {
-        pending.values.forEach { it.resumeWithException(IllegalStateException("Amber signer owner destroyed")) }
-        pending.clear()
+        inFlight?.resumeWithException(IllegalStateException("Amber signer owner destroyed"))
+        inFlight = null
         launcher.unregister()
         activity.lifecycle.removeObserver(this)
     }

@@ -29,6 +29,10 @@ sealed interface RelayMessage {
     data class Notice(val message: String) : RelayMessage
     data class ProtocolError(val message: String) : RelayMessage
     data class Failure(val message: String) : RelayMessage
+    /** NIP-42: the relay wants proof of the reader's key before serving some events. */
+    data class AuthChallenge(val challenge: String) : RelayMessage
+    /** The relay ended a subscription, e.g. "auth-required: …". */
+    data class SubscriptionClosed(val subscriptionId: String, val message: String) : RelayMessage
     data object Closed : RelayMessage
 }
 
@@ -127,13 +131,23 @@ class NostrRelayClient(
     suspend fun publishAndAwaitAck(
         event: NostrEvent,
         timeoutMillis: Long = 10_000L
+    ): RelayMessage.Ack = sendAndAwaitAck(event, "EVENT", timeoutMillis)
+
+    /** Answers a NIP-42 challenge with a signed kind-22242 event. */
+    suspend fun authenticate(event: NostrEvent, timeoutMillis: Long = 10_000L): RelayMessage.Ack =
+        sendAndAwaitAck(event, "AUTH", timeoutMillis)
+
+    private suspend fun sendAndAwaitAck(
+        event: NostrEvent,
+        verb: String,
+        timeoutMillis: Long
     ): RelayMessage.Ack {
         val deferred = CompletableDeferred<RelayMessage.Ack>()
         check(pendingAcks.putIfAbsent(event.id, deferred) == null) {
             "An acknowledgement is already pending for ${event.id}"
         }
         try {
-            publish(event)
+            send(JSONArray().put(verb).put(JSONObject(event.toJson())).toString())
             val acknowledgement = withTimeout(timeoutMillis) { deferred.await() }
             check(acknowledgement.accepted) {
                 "Relay rejected ${event.id}: ${acknowledgement.message.ifBlank { "no reason provided" }}"
@@ -168,6 +182,8 @@ class NostrRelayClient(
             "OK" -> RelayMessage.Ack(message.getString(1), message.getBoolean(2), message.optString(3))
             "EOSE" -> RelayMessage.EndOfStoredEvents(message.getString(1))
             "NOTICE" -> RelayMessage.Notice(message.optString(1))
+            "AUTH" -> RelayMessage.AuthChallenge(message.getString(1))
+            "CLOSED" -> RelayMessage.SubscriptionClosed(message.getString(1), message.optString(2))
             else -> null
         }
     }.getOrElse { RelayMessage.ProtocolError("Malformed relay message: ${it.message}") }

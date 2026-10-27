@@ -152,17 +152,19 @@ internal val Panel = Color(0xFF151923)
 internal val PanelLight = Color(0xFF202634)
 internal val Ink = Color(0xFFF4F6FA)
 internal val Muted = Color(0xFF9BA5B7)
-private const val DEFAULT_RELAY_URL = "wss://relay.damus.io"
+private const val DEFAULT_RELAY_URL = "wss://nos.lol"
 private const val LIGHTNING_ADDRESS = "lwb89@blink.sv"
 private const val APP_PREFERENCES = "nomisma_app"
 private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete_v1"
 
 private data class RelayPreset(val name: String, val url: String, val detail: String)
 
+// Every preset must hand gift wraps (kind 1059) to their recipient: relay.damus.io stopped doing
+// so (it demands NIP-42 auth and then rejects it), and relay.primal.net does not return them by #p.
 private val RELAY_PRESETS = listOf(
-    RelayPreset("Damus", "wss://relay.damus.io", "Relay pubblico generalista e ampiamente compatibile."),
     RelayPreset("nos.lol", "wss://nos.lol", "Relay pubblico con filtri antispam e ampia adozione."),
-    RelayPreset("Primal", "wss://relay.primal.net", "Infrastruttura pubblica Primal, distribuita e ad alta disponibilità.")
+    RelayPreset("Ditto", "wss://relay.ditto.pub", "Relay pubblico che consegna i messaggi cifrati al destinatario."),
+    RelayPreset("nostr.mom", "wss://nostr.mom", "Relay pubblico generalista, compatibile con i messaggi cifrati.")
 )
 
 @Composable
@@ -258,7 +260,8 @@ fun NomismaApp(
         if (!autoConnectAttempted && snapshot.participants.size >= 2) {
             autoConnectAttempted = true
             val preferences = context.securePreferences("nomisma_sync")
-            if (preferences.getBoolean(KEY_AUTO_CONNECT, false)) {
+            val paired = preferences.getString(KEY_RECIPIENT_PUBKEY, "").orEmpty().trim().length == 64
+            if (paired && preferences.getBoolean(KEY_AUTO_CONNECT, true)) {
                 val localId = preferences.getString(KEY_LOCAL_PARTICIPANT, snapshot.participants[0].id)
                     ?: snapshot.participants[0].id
                 val remoteId = preferences.getString(KEY_REMOTE_PARTICIPANT, snapshot.participants[1].id)
@@ -1084,7 +1087,7 @@ private fun SettingsScreen(
         mutableStateOf(syncPreferences.getString(KEY_REMOTE_PARTICIPANT, defaultRemoteParticipantId) ?: defaultRemoteParticipantId)
     }
     var autoConnect by rememberSaveable {
-        mutableStateOf(syncPreferences.getBoolean(KEY_AUTO_CONNECT, false))
+        mutableStateOf(syncPreferences.getBoolean(KEY_AUTO_CONNECT, true))
     }
     var newTagName by rememberSaveable { mutableStateOf("") }
     var tagToRename by remember { mutableStateOf<TagDefinition?>(null) }
@@ -1162,6 +1165,28 @@ private fun SettingsScreen(
         }
     }
 
+    /**
+     * Sync is meant to be always on: as soon as a pairing is complete the relay connects by itself.
+     * Called at the moments the pairing changes, never on each keystroke of the relay field.
+     */
+    fun connectWhenReady(
+        relay: String = relayUrl,
+        recipient: String = recipientPubkey,
+        local: String = localParticipantId,
+        remote: String = remoteParticipantId
+    ) {
+        val readiness = PairingReadinessEvaluator.evaluate(relay, syncState.identity?.pubkey, recipient, local, remote)
+        if (signer == null || !readiness.isReady) return
+        autoConnect = true
+        syncPreferences.edit().putBoolean(KEY_AUTO_CONNECT, true).apply()
+        onConnect(SyncConfiguration(relay, recipient, local, remote))
+    }
+
+    // Amber identity confirmed after the pairing was set up: that was the last missing piece.
+    LaunchedEffect(syncState.identity?.pubkey) {
+        if (autoConnect && syncState.status == SyncConnectionStatus.DISCONNECTED) connectWhenReady()
+    }
+
     fun selectParticipant(participantId: String, local: Boolean) {
         if ((local && participantId == remoteParticipantId) || (!local && participantId == localParticipantId)) return
         if (local) {
@@ -1172,8 +1197,10 @@ private fun SettingsScreen(
             syncPreferences.edit().putString(KEY_REMOTE_PARTICIPANT, participantId).apply()
         }
         if (syncState.status != SyncConnectionStatus.DISCONNECTED) onDisconnect()
-        autoConnect = false
-        syncPreferences.edit().putBoolean(KEY_AUTO_CONNECT, false).apply()
+        connectWhenReady(
+            local = if (local) participantId else localParticipantId,
+            remote = if (local) remoteParticipantId else participantId
+        )
     }
 
     fun storePairingInvite(invite: PairingInvite) {
@@ -1185,15 +1212,14 @@ private fun SettingsScreen(
         recipientPubkey = invite.senderPubkey
         localParticipantId = invite.receiverParticipantId
         remoteParticipantId = invite.senderParticipantId
-        autoConnect = false
         syncPreferences.edit()
             .putString(KEY_RELAY_URL, relayUrl)
             .putString(KEY_RECIPIENT_PUBKEY, recipientPubkey)
             .putString(KEY_LOCAL_PARTICIPANT, localParticipantId)
             .putString(KEY_REMOTE_PARTICIPANT, remoteParticipantId)
-            .putBoolean(KEY_AUTO_CONNECT, false)
             .apply()
         pairingMessage = "Pairing importato · verifica Amber e connetti il relay"
+        connectWhenReady(invite.relayUrl, invite.senderPubkey, invite.receiverParticipantId, invite.senderParticipantId)
     }
 
     Column(
@@ -1610,6 +1636,9 @@ private fun SettingsScreen(
                         recipientLabel = profile.takeIf { it.name != null || it.displayName != null }?.label
                         syncPreferences.edit().putString(KEY_RECIPIENT_PUBKEY, profile.pubkey).apply()
                         syncPreferences.saveRecipientLabel(profile.pubkey, recipientLabel)
+                        if (autoConnect && syncState.status == SyncConnectionStatus.DISCONNECTED) {
+                            connectWhenReady(recipient = profile.pubkey)
+                        }
                     },
                     onCleared = {
                         recipientPubkey = ""
@@ -1657,6 +1686,7 @@ private fun SettingsScreen(
                 pairingMessage?.let { Text(t(it), color = Muted, style = MaterialTheme.typography.bodySmall) }
                 PairingReadinessCard(pairingReadiness)
                 SyncHealthCard(syncHealth)
+                LedgerCheckCard(syncState.ledgerCheck)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         enabled = signer != null && pairingReadiness.isReady &&
@@ -2173,6 +2203,7 @@ private fun HomeScreen(
                     fontSize = 28.sp,
                     fontWeight = FontWeight.SemiBold
                 )
+                LedgerCheckLine(syncState.ledgerCheck)
             }
         }
 

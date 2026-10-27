@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.3 — 2026-10-27
+
+Sync that works on its own, and a two-way check that both devices hold the same balances. Both devices need 0.1.3.
+
+### Added
+
+- Always-on sync. Once paired, Nomisma connects to the relay at start, after importing an invite, after choosing the other participant, and after Amber confirms the identity. Every change is published as soon as it is saved, with no button to press; whatever a relay refuses is retried with growing delays. "Disconnect" still turns it off.
+- Two-way balance check. Each device keeps a vector clock (the last operation it applied for each author) and a SHA-256 fingerprint of the financial state: entries, amounts, payers, split, deletions, and cycles. The devices exchange these checkpoints and compare fingerprints only when their clocks match, so a sync in progress never raises a false alarm. When one device has not seen some of the other's operations, the other sends them again by itself. Both screens show the same short fingerprint and the time of the last agreement, so it can be compared by eye too. Checkpoints are gift-wrapped like operations and expire on the relay after 15 minutes (NIP-40).
+- NIP-42 relay authentication, for relays that only deliver gift wraps to their recipient.
+
+### Fixed
+
+- Operations never reached the other device. Three bugs stacked up: the native secp256k1 library was never loaded, the gift-wrap Schnorr signature had message and key swapped, and the NIP-44 key came from hashed ECDH instead of the raw shared point. The cryptography is now tested against the real native library and the official NIP-44 vectors.
+- relay.damus.io no longer delivers gift wraps (it demands NIP-42 and then rejects it). The default relay is now nos.lol, and the presets are relays that deliver gift wraps to their recipient. A pairing made on damus needs the relay changed on both devices.
+- Operations published to a relay or to a partner that never received them are sent again when the relay or the other participant changes.
+- Private messages from other apps share the same inbox. Nomisma no longer decrypts them: a gift wrap whose seal is not from the other participant is dropped before its content is opened.
+- Incoming sync could freeze for good when an Amber request was closed or cancelled. Amber now answers in the background (NIP-55 content provider) when the permission is remembered, and its screen opens only when needed.
+- Recipient profiles showed as unknown, for the same native-library bug.
+
 ## 0.1.2 — 2026-10-18
 
 Easier pairing: the invite is picked up by the app, and the other participant is found by profile name.

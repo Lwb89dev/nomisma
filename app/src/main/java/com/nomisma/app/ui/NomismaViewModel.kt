@@ -256,6 +256,7 @@ class NomismaViewModel(
                 val previous = _snapshot.value
                 val current = repositoryMutex.withLock { block() }
                 publishSnapshotTransition(previous, current, ThemeEventOrigin.LOCAL)
+                syncController.onLocalChange()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {

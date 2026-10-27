@@ -69,7 +69,15 @@ class UiTextTest {
             "Nessun profilo trovato. Prova con nome@dominio oppure incolla la npub.",
             "Più profili possono avere lo stesso nome: scegli quello verificato e confronta la npub con l'altra persona.",
             "verificato",
-            "non verificato"
+            "non verificato",
+            "Relay pubblico che consegna i messaggi cifrati al destinatario.",
+            "Relay pubblico generalista, compatibile con i messaggi cifrati.",
+            "Saldi verificati con l'altro dispositivo",
+            "Verifica dei saldi in corso",
+            "Riallineamento: operazioni mancanti reinviate",
+            "I saldi non coincidono con l'altro dispositivo",
+            "La verifica dei saldi parte quando entrambi i dispositivi sono connessi",
+            "Impronta del ledger"
         )
         // Spanish spells "recipient" exactly like Italian.
         val sameAsItalian = setOf("es" to "Destinatario")

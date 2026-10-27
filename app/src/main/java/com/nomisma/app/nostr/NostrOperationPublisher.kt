@@ -1,7 +1,7 @@
 package com.nomisma.app.nostr
 
 import com.nomisma.app.domain.LedgerOperation
-import fr.acinq.secp256k1.Secp256k1Jni
+import fr.acinq.secp256k1.Secp256k1
 import java.security.SecureRandom
 
 enum class OperationTransport {
@@ -50,6 +50,37 @@ class NostrOperationPublisher(
     }
 
     suspend fun publishGiftWrap(operation: LedgerOperation, recipientPubkey: String): NostrEvent {
+        val giftWrap = buildGiftWrap(operation, recipientPubkey)
+        relay.publishAndAwaitAck(giftWrap)
+        return giftWrap
+    }
+
+    suspend fun publishCheckpoint(digest: LedgerDigest, recipientPubkey: String): NostrEvent {
+        val giftWrap = buildCheckpoint(digest, recipientPubkey)
+        relay.publishAndAwaitAck(giftWrap, timeoutMillis = 5_000L)
+        return giftWrap
+    }
+
+    /**
+     * A ledger checkpoint is only meaningful for a few minutes, so its gift wrap carries a NIP-40
+     * expiration and relays that honour it drop it afterwards. (Ephemeral kinds would be cleaner,
+     * but nos.lol refuses them outright.)
+     */
+    internal suspend fun buildCheckpoint(digest: LedgerDigest, recipientPubkey: String): NostrEvent {
+        val signerIdentity = signer.getIdentity()
+        val rumor = UnsignedNostrEvent(
+            pubkey = signerIdentity.pubkey,
+            createdAt = digest.sentAtMillis / 1000L,
+            kind = NostrKinds.LEDGER_CHECKPOINT,
+            tags = emptyList(),
+            content = digest.toJson()
+        )
+        val expiresAt = System.currentTimeMillis() / 1000L + CHECKPOINT_LIFETIME_SECONDS
+        return wrapRumor(rumor, recipientPubkey, NostrKinds.GIFT_WRAP, listOf(NostrTag(listOf("expiration", expiresAt.toString()))))
+    }
+
+    /** Rumor → seal signed by the user's signer → gift wrap signed by a one-time key (NIP-59). */
+    internal suspend fun buildGiftWrap(operation: LedgerOperation, recipientPubkey: String): NostrEvent {
         val signerIdentity = signer.getIdentity()
         val rumor = UnsignedNostrEvent(
             pubkey = signerIdentity.pubkey,
@@ -58,6 +89,15 @@ class NostrOperationPublisher(
             tags = emptyList(),
             content = operationWithSigner(operation, signerIdentity.pubkey).toWireJson()
         )
+        return wrapRumor(rumor, recipientPubkey, NostrKinds.GIFT_WRAP)
+    }
+
+    internal suspend fun wrapRumor(
+        rumor: UnsignedNostrEvent,
+        recipientPubkey: String,
+        wrapperKind: Int,
+        extraTags: List<NostrTag> = emptyList()
+    ): NostrEvent {
         val sealedContent = signer.nip44Encrypt(rumor.toRumorJson(), recipientPubkey)
         val seal = signer.signEvent(
             UnsignedNostrEvent(
@@ -73,19 +113,21 @@ class NostrOperationPublisher(
 
         val ephemeralPrivateKey = newPrivateKey()
         try {
-            return publishWrappedSeal(seal, recipientPubkey, ephemeralPrivateKey)
+            return wrapSeal(seal, recipientPubkey, ephemeralPrivateKey, wrapperKind, extraTags)
         } finally {
             ephemeralPrivateKey.fill(0)
         }
     }
 
-    private suspend fun publishWrappedSeal(
+    private fun wrapSeal(
         seal: NostrEvent,
         recipientPubkey: String,
-        ephemeralPrivateKey: ByteArray
+        ephemeralPrivateKey: ByteArray,
+        wrapperKind: Int,
+        extraTags: List<NostrTag>
     ): NostrEvent {
         val ephemeralPubkey = NostrHex.encode(
-            Secp256k1Jni.pubkeyCreate(ephemeralPrivateKey).copyOfRange(1, 33)
+            Secp256k1.pubkeyCreate(ephemeralPrivateKey).copyOfRange(1, 33)
         )
         val wrappedSeal = Nip44V2.encrypt(
             plaintext = seal.toJson(),
@@ -94,17 +136,15 @@ class NostrOperationPublisher(
         )
         val giftWrapUnsigned = UnsignedNostrEvent(
             pubkey = ephemeralPubkey,
-            createdAt = randomizedPastTimestamp(),
-            kind = NostrKinds.GIFT_WRAP,
-            tags = listOf(NostrTag(listOf("p", recipientPubkey))),
+            // Ephemeral wraps are never stored, so there is no history to blur; some relays drop
+            // ephemeral events that look old.
+            createdAt = if (wrapperKind == NostrKinds.GIFT_WRAP) randomizedPastTimestamp() else System.currentTimeMillis() / 1000L,
+            kind = wrapperKind,
+            tags = listOf(NostrTag(listOf("p", recipientPubkey))) + extraTags,
             content = wrappedSeal
         )
         val giftWrapId = NostrHash.sha256(giftWrapUnsigned.canonicalSerialization(ephemeralPubkey))
-        val giftWrapSignature = Secp256k1Jni.signSchnorr(
-            ephemeralPrivateKey,
-            giftWrapId,
-            randomBytes(32)
-        )
+        val giftWrapSignature = Secp256k1.signSchnorr(giftWrapId, ephemeralPrivateKey, randomBytes(32))
         val giftWrap = NostrEvent(
             id = NostrHex.encode(giftWrapId),
             pubkey = ephemeralPubkey,
@@ -115,7 +155,6 @@ class NostrOperationPublisher(
             sig = NostrHex.encode(giftWrapSignature)
         )
         NostrEventValidator.validate(giftWrap).getOrThrow()
-        relay.publishAndAwaitAck(giftWrap)
         return giftWrap
     }
 
@@ -131,7 +170,7 @@ class NostrOperationPublisher(
     private fun newPrivateKey(): ByteArray {
         while (true) {
             val key = randomBytes(32)
-            if (Secp256k1Jni.secKeyVerify(key)) return key
+            if (Secp256k1.secKeyVerify(key)) return key
             key.fill(0)
         }
     }
@@ -142,6 +181,7 @@ class NostrOperationPublisher(
         (System.currentTimeMillis() / 1000L) - 3_600L - secureRandom.nextInt(172_800).toLong()
 
     private companion object {
+        const val CHECKPOINT_LIFETIME_SECONDS = 15 * 60L
         val secureRandom = SecureRandom()
     }
 }

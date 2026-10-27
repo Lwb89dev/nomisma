@@ -1,6 +1,6 @@
 package com.nomisma.app.nostr
 
-import fr.acinq.secp256k1.Secp256k1Jni
+import fr.acinq.secp256k1.Secp256k1
 import org.bouncycastle.crypto.engines.ChaCha7539Engine
 import org.bouncycastle.crypto.params.KeyParameter
 import org.bouncycastle.crypto.params.ParametersWithIV
@@ -20,16 +20,27 @@ object Nip44V2 {
 
     fun encrypt(plaintext: String, privateKey: ByteArray, recipientPubkeyHex: String): String {
         require(privateKey.size == 32) { "Private key must be 32 bytes" }
-        require(Secp256k1Jni.secKeyVerify(privateKey)) { "Invalid private key" }
-        val recipientPubkey = Hex.decode(recipientPubkeyHex)
-        require(recipientPubkey.size == 32) { "Recipient pubkey must be 32 bytes" }
-        val sharedX = Secp256k1Jni.ecdh(privateKey, byteArrayOf(2) + recipientPubkey)
-        val conversationKey = hkdfExtract(sharedX, NIP44_SALT)
+        require(Secp256k1.secKeyVerify(privateKey)) { "Invalid private key" }
+        val conversationKey = conversationKey(privateKey, recipientPubkeyHex)
         return try {
             encryptWithConversationKey(plaintext, conversationKey, randomBytes(32))
         } finally {
-            sharedX.fill(0)
             conversationKey.fill(0)
+        }
+    }
+
+    internal fun conversationKey(privateKey: ByteArray, recipientPubkeyHex: String): ByteArray {
+        val recipientPubkey = Hex.decode(recipientPubkeyHex)
+        require(recipientPubkey.size == 32) { "Recipient pubkey must be 32 bytes" }
+        // NIP-44 hashes the raw x coordinate of the shared point. libsecp256k1's ecdh() returns
+        // SHA-256 of the point instead, which the recipient's signer would never reproduce.
+        val sharedPoint = Secp256k1.pubKeyTweakMul(byteArrayOf(2) + recipientPubkey, privateKey)
+        val sharedX = sharedPoint.copyOfRange(1, 33)
+        sharedPoint.fill(0)
+        return try {
+            hkdfExtract(sharedX, NIP44_SALT)
+        } finally {
+            sharedX.fill(0)
         }
     }
 
