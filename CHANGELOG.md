@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.4 — 2026-10-31
+
+Android alerts when the other participant adds an expense.
+
+### Added
+
+- New expenses received through Nostr create an Android notification with the participant name, amount, and description. Tapping it opens Nomisma. Expenses applied during backlog reconciliation are included, while updates and duplicate events do not create alerts.
+- Notification channel and runtime permission request on Android 13 and later. Notifications require the recipient app process to be alive for Nostr delivery; there is no FCM push path while the app is stopped.
+
 ## 0.1.3 — 2026-10-27
 
 Sync that works on its own, and a two-way check that both devices hold the same balances. Both devices need 0.1.3.

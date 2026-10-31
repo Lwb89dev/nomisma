@@ -130,6 +130,7 @@ import com.nomisma.app.nostr.SyncHealthEvaluator
 import com.nomisma.app.nostr.SyncHealthLevel
 import com.nomisma.app.nostr.SyncHealthSummary
 import com.nomisma.app.nostr.pubkeyFingerprint
+import com.nomisma.app.notifications.ExpenseNotifier
 import com.nomisma.app.theme.ThemeFinancialState
 import com.nomisma.app.theme.ThemeIdentityRegistry
 import com.nomisma.app.theme.ParticipantColorPalette
@@ -182,7 +183,10 @@ fun NomismaApp(
         NomismaTheme { LedgerOpenError() }
         return
     }
-    val viewModel: NomismaViewModel = viewModel(factory = NomismaViewModel.Factory(repository, signer))
+    val expenseNotifier = remember { ExpenseNotifier(context.applicationContext) }
+    val viewModel: NomismaViewModel = viewModel(
+        factory = NomismaViewModel.Factory(repository, signer, expenseNotifier)
+    )
     val snapshot by viewModel.snapshot.collectAsStateWithLifecycle()
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     val uiMessage by viewModel.uiMessage.collectAsStateWithLifecycle()

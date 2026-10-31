@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="invite_intake_label">Importa invito Nomisma</string>
+    <string name="new_expense_notification_channel_name">Spese del ledger condiviso</string>
+    <string name="new_expense_notification_channel_description">Avvisi quando il partner aggiunge una spesa</string>
+    <string name="new_expense_notification_title">Nuova spesa da %1$s</string>
+    <string name="new_expense_notification_body">%1$s · %2$s</string>
+    <string name="new_expense_notification_unknown_participant">Il partner</string>
 </resources>

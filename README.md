@@ -2,7 +2,7 @@
 
 Nomisma is an Android app for splitting and synchronizing expenses in a shared ledger. It is **local-first**: the ledger is stored on the device in SQLite, while operations can be published and received over Nostr using Amber as an external signer.
 
-Current application version: `0.1.3`. See [CHANGELOG.md](CHANGELOG.md).
+Current application version: `0.1.4`. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Current status
 
@@ -13,6 +13,7 @@ The project is an advanced prototype / internal beta. The local workflow is usab
 - first-run onboarding covering scene selection, privacy, Amber, curated public relays, and pairing;
 - local ledger with two participants, configurable currency, and capacity;
 - expense creation, editing, and soft deletion;
+- Android notifications for new expenses received from the paired participant, including expenses applied during relay backlog reconciliation;
 - amount, description, merchant, notes, date, category, and tags;
 - shared categories and tags, with rename, archive, and restore actions;
 - balance calculation and settlement-cycle closure;
@@ -140,4 +141,5 @@ The current test suite primarily covers:
 - release builds use a debug key and are for local/development distribution only;
 - there are no UI or screenshot tests yet;
 - synchronization depends on Amber availability and correct relay configuration;
+- expense notifications are created after Nostr delivery while the recipient app process is alive; there is no FCM push path when Android has stopped the app;
 - the project license has not yet been defined in a dedicated file.

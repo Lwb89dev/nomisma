@@ -1,14 +1,19 @@
 package com.nomisma.app
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
 import com.nomisma.app.nostr.AmberSigner
 import com.nomisma.app.nostr.PairingInviteCodec
 import com.nomisma.app.nostr.PairingInviteText
@@ -18,10 +23,13 @@ import com.nomisma.app.ui.NomismaApp
 class MainActivity : ComponentActivity() {
     private lateinit var amberSigner: AmberSigner
     private var incomingPairingCode by mutableStateOf<String?>(null)
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         amberSigner = AmberSigner(this)
+        requestNotificationPermission()
         capturePairingIntent(intent)
         setContent {
             NomismaApp(
@@ -42,6 +50,15 @@ class MainActivity : ComponentActivity() {
         super.onWindowFocusChanged(hasFocus)
         // Android only lets the focused app read the clipboard.
         if (hasFocus) captureClipboardInvite()
+    }
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
     private fun capturePairingIntent(intent: Intent?) {

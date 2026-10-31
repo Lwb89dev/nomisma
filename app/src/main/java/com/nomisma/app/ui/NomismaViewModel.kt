@@ -13,6 +13,8 @@ import com.nomisma.app.nostr.NostrSessionController
 import com.nomisma.app.nostr.NostrSessionState
 import com.nomisma.app.nostr.Signer
 import com.nomisma.app.nostr.SyncConfiguration
+import com.nomisma.app.notifications.ExpenseNotificationPolicy
+import com.nomisma.app.notifications.ExpenseNotifier
 import com.nomisma.app.theme.ThemeRegistry
 import com.nomisma.app.theme.ThemeEventCoordinator
 import com.nomisma.app.theme.ThemeEventOrigin
@@ -29,7 +31,8 @@ import kotlinx.coroutines.sync.withLock
 
 class NomismaViewModel(
     private val repository: LocalLedgerRepository,
-    signer: Signer?
+    signer: Signer?,
+    private val expenseNotifier: ExpenseNotifier? = null
 ) : ViewModel() {
     private val syncController = NostrSessionController(signer, repository, viewModelScope)
     private val repositoryMutex = Mutex()
@@ -278,6 +281,12 @@ class NomismaViewModel(
             try {
                 val previous = _snapshot.value
                 val current = repositoryMutex.withLock { repository.loadSnapshot() }
+                if (origin != ThemeEventOrigin.LOCAL) {
+                    expenseNotifier?.notifyNewExpenses(
+                        ExpenseNotificationPolicy.addedExpenses(previous, current),
+                        current
+                    )
+                }
                 publishSnapshotTransition(previous, current, origin, reconcile)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -326,12 +335,13 @@ class NomismaViewModel(
 
     class Factory(
         private val repository: LocalLedgerRepository,
-        private val signer: Signer?
+        private val signer: Signer?,
+        private val expenseNotifier: ExpenseNotifier? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass.isAssignableFrom(NomismaViewModel::class.java))
-            return NomismaViewModel(repository, signer) as T
+            return NomismaViewModel(repository, signer, expenseNotifier) as T
         }
     }
 }

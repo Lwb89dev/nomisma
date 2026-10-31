@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="invite_intake_label">Import Nomisma invite</string>
+    <string name="new_expense_notification_channel_name">Shared ledger expenses</string>
+    <string name="new_expense_notification_channel_description">Notifications when your partner adds an expense</string>
+    <string name="new_expense_notification_title">New expense from %1$s</string>
+    <string name="new_expense_notification_body">%1$s · %2$s</string>
+    <string name="new_expense_notification_unknown_participant">Your partner</string>
 </resources>
