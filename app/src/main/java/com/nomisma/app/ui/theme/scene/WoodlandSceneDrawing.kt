@@ -59,6 +59,7 @@ internal class WoodlandTokenRender {
     var y = 0f
     var scale = 1f
     var rotation = 0f
+    var squash = 0f
 }
 
 internal fun DrawScope.drawWoodlandScene(
@@ -74,7 +75,7 @@ internal fun DrawScope.drawWoodlandScene(
     val woodlandBackground = frame.assets?.background
     if (woodlandBackground != null) {
         drawAssetCover(woodlandBackground)
-        drawRect(Color(0xFF061109).copy(alpha = 0.13f))
+        drawRect(Color(0xFFFFF4D7).copy(alpha = 0.035f))
     } else {
         val backdrop = frame.materials?.woodland(size.width, size.height, frame.ambient, colorA, colorB)
             ?: Brush.verticalGradient(listOf(Color(0xFF1A3022), Color(0xFF0B1710), Color(0xFF050906)))
@@ -95,11 +96,18 @@ internal fun DrawScope.drawWoodlandScene(
         drawMossAndForestFloor(groundTop, frame)
     }
 
-    val chestLeft = size.width * 0.24f
+    val chestLeft = size.width * 0.215f
     val chestTop = size.height * 0.45f
-    val chestWidth = size.width * 0.52f
-    val chestHeight = size.height * 0.34f
-    drawWoodenContainer(state, fill, frame, chestLeft, chestTop, chestWidth, chestHeight)
+    val chestWidth = size.width * 0.57f
+    val chestHeight = size.height * 0.32f
+    val chestPivot = Offset(chestLeft + chestWidth / 2f, chestTop + chestHeight * 0.86f)
+    val containerWiggle = sin(frame.contribution.coerceIn(0f, 1f) * PI.toFloat() * 4f) * contributionReaction * 1.15f
+    withTransform({
+        scale(1f + contributionReaction * 0.025f, 1f - contributionReaction * 0.018f, chestPivot)
+        rotate(containerWiggle, chestPivot)
+    }) {
+        drawWoodenContainer(state, fill, frame, chestLeft, chestTop, chestWidth, chestHeight)
+    }
 
     val travelShift = size.width * 0.10f
     val centerA = Offset(
@@ -147,10 +155,13 @@ internal fun DrawScope.drawWoodlandScene(
             val angle = pseudo(index, 0.26f) * PI.toFloat() * 2f
             val radius = settlementFlash * (22 + index * 2).dp.toPx()
             val center = Offset(chestLeft + chestWidth / 2f, chestTop + chestHeight * 0.4f)
-            drawCircle(
-                Color(0xFFFFD98A).copy(alpha = (1f - settlementFlash * 0.55f) * 0.62f),
-                (1.2f + index % 3).dp.toPx(),
-                center + Offset(cos(angle) * radius, sin(angle) * radius)
+            val sparkleCenter = center + Offset(cos(angle) * radius, sin(angle) * radius)
+            val color = if (index % 2 == 0) Color(0xFFFFC8D8) else Color(0xFFFFE7A3)
+            drawKawaiiSpark(
+                center = sparkleCenter,
+                radius = (2.2f + index % 3).dp.toPx(),
+                color = color.copy(alpha = (1f - settlementFlash * 0.55f) * 0.78f),
+                rotationDegrees = index * 23f + settlementFlash * 90f
             )
         }
     }
@@ -166,10 +177,10 @@ private fun DrawScope.drawWoodlandAssetCharacter(
 ): Boolean {
     val image = frame.assets?.woodlandCharacters?.get(identityId) ?: return false
     val heightRatio = when (identityId) {
-        "bear" -> 0.34f
-        "hedgehog" -> 0.22f
-        "fox", "raccoon" -> 0.29f
-        else -> 0.28f
+        "bear" -> 0.33f
+        "hedgehog" -> 0.25f
+        "fox", "raccoon", "squirrel" -> 0.31f
+        else -> 0.30f
     }
     var targetHeight = size.height * heightRatio
     var targetWidth = targetHeight * image.width / image.height.toFloat()
@@ -179,17 +190,21 @@ private fun DrawScope.drawWoodlandAssetCharacter(
         targetWidth *= factor
         targetHeight *= factor
     }
-    val visualCenter = Offset(center.x, size.height * 0.62f)
+    val idlePhase = sin(frame.ambient * PI.toFloat() * 2f + center.x * 0.018f)
+    val idleBob = if (frame.reducedMotion) 0f else idlePhase * 1.4.dp.toPx()
+    val visualCenter = Offset(center.x, size.height * 0.63f + idleBob)
     drawCircle(
         Brush.radialGradient(listOf(participantColor.copy(alpha = 0.26f), Color.Transparent)),
         radius = targetWidth.coerceAtLeast(targetHeight) * 0.72f,
         center = visualCenter
     )
-    val baseline = size.height * 0.78f - reaction * 6.dp.toPx()
+    val baseline = size.height * 0.79f + idleBob - reaction * 6.dp.toPx()
     val left = center.x - targetWidth / 2f
     val top = baseline - targetHeight
     withTransform({
         if (!facingRight) scale(-1f, 1f, Offset(center.x, baseline - targetHeight / 2f))
+        val breathe = if (frame.reducedMotion) 0f else idlePhase * 0.008f
+        scale(1f - breathe + reaction * 0.055f, 1f + breathe - reaction * 0.035f, Offset(center.x, baseline))
         rotate((if (facingRight) 1f else -1f) * reaction * 3.2f, Offset(center.x, baseline))
     }) {
         drawAssetInRect(image, left, top, targetWidth, targetHeight)
@@ -314,7 +329,7 @@ private fun DrawScope.drawWoodenContainer(
     height: Float
 ) {
     drawOval(
-        Brush.radialGradient(listOf(Color.Black.copy(alpha = 0.72f), Color.Transparent)),
+        Brush.radialGradient(listOf(Color(0xFF6C3F2A).copy(alpha = 0.30f), Color.Transparent)),
         Offset(left - width * 0.10f, top + height * 0.76f),
         Size(width * 1.20f, height * 0.30f)
     )
@@ -334,12 +349,12 @@ private fun DrawScope.drawWoodenContainer(
         )
     }
 
-    // Inner edge of the metal rim on container_log.webp. The photo already
-    // has the hollow, so the dark fill and stroke are only the procedural fallback.
-    val windowLeft = left + width * 0.292f
-    val windowTop = top + height * 0.368f
-    val windowRight = left + width * 0.748f
-    val windowBottom = top + height * 0.652f
+    // Front display window of the kawaii savings stump. Runtime tokens are kept
+    // separate so the fill can still reflect the live ledger.
+    val windowLeft = left + width * 0.275f
+    val windowTop = top + height * 0.47f
+    val windowRight = left + width * 0.765f
+    val windowBottom = top + height * 0.79f
     val window = Path().apply {
         addRoundRect(
             RoundRect(
@@ -373,7 +388,7 @@ private fun DrawScope.drawWoodenContainer(
             val column = index % columns
             val x = innerLeft + innerSpan * ((column + 0.5f) / columns) + (pseudo(index, 0.32f) - 0.5f) * 4.dp.toPx()
             val y = windowBottom - height * 0.06f - row * 8.dp.toPx() - pseudo(index, 0.88f) * 2.dp.toPx()
-            drawWoodlandToken(ownerA, Offset(x, y), 0.68f, index * 19f)
+            drawWoodlandToken(ownerA, Offset(x, y), 0.68f, index * 19f, frame.assets)
         }
         drawRect(
             Brush.linearGradient(listOf(Color.White.copy(alpha = 0.10f), Color.Transparent, Color.White.copy(alpha = 0.025f))),
@@ -851,8 +866,27 @@ private fun DrawScope.drawWoodlandToken(
     isWalnut: Boolean,
     center: Offset,
     scale: Float,
-    rotationDegrees: Float = 0f
+    rotationDegrees: Float = 0f,
+    assets: ThemeAssetPack? = null,
+    squash: Float = 0f
 ) {
+    val asset = if (isWalnut) assets?.woodlandWalnut else assets?.woodlandAcorn
+    if (asset != null) {
+        val diameter = 14.dp.toPx() * scale
+        withTransform({
+            rotate(rotationDegrees, center)
+            scale(1f + squash, 1f - squash, center)
+        }) {
+            drawAssetInRect(
+                image = asset,
+                left = center.x - diameter / 2f,
+                top = center.y - diameter / 2f,
+                width = diameter,
+                height = diameter
+            )
+        }
+        return
+    }
     rotate(rotationDegrees, center) {
         if (isWalnut) {
             val radius = 5.dp.toPx() * scale
@@ -903,14 +937,42 @@ private fun DrawScope.drawWoodlandContribution(frame: WoodlandFrame) {
             isWalnut = token.isWalnut,
             center = Offset(token.x, token.y),
             scale = token.scale,
-            rotationDegrees = token.rotation
+            rotationDegrees = token.rotation,
+            assets = frame.assets,
+            squash = token.squash
         )
     }
     frame.sparks?.forEachActive { spark ->
-        drawCircle(
-            Color(0xFFFFD790).copy(alpha = 1f - spark.lifeProgress),
-            spark.size,
-            Offset(spark.x, spark.y)
+        val color = when (spark.seed % 3) {
+            0 -> Color(0xFFFFC7D8)
+            1 -> Color(0xFFFFE49A)
+            else -> Color(0xFFBFE8C1)
+        }
+        drawKawaiiSpark(
+            center = Offset(spark.x, spark.y),
+            radius = spark.size * (1.15f - spark.lifeProgress * 0.25f),
+            color = color.copy(alpha = 1f - spark.lifeProgress),
+            rotationDegrees = spark.seed * 31f + spark.lifeProgress * 120f
         )
+    }
+}
+
+private fun DrawScope.drawKawaiiSpark(
+    center: Offset,
+    radius: Float,
+    color: Color,
+    rotationDegrees: Float
+) {
+    rotate(rotationDegrees, center) {
+        val sparkle = Path().apply {
+            moveTo(center.x, center.y - radius)
+            quadraticTo(center.x + radius * 0.22f, center.y - radius * 0.22f, center.x + radius, center.y)
+            quadraticTo(center.x + radius * 0.22f, center.y + radius * 0.22f, center.x, center.y + radius)
+            quadraticTo(center.x - radius * 0.22f, center.y + radius * 0.22f, center.x - radius, center.y)
+            quadraticTo(center.x - radius * 0.22f, center.y - radius * 0.22f, center.x, center.y - radius)
+            close()
+        }
+        drawPath(sparkle, color)
+        drawCircle(Color.White.copy(alpha = color.alpha * 0.78f), radius * 0.18f, center)
     }
 }

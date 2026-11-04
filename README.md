@@ -23,7 +23,7 @@ The project is an advanced prototype / internal beta. The local workflow is usab
 - saved filters with custom date ranges and amount thresholds;
 - three selectable visual scenes:
   - `Vessel`: a hand-blown glass pitcher with cavity-clipped liquid, participant-colored vertical pours, ballistic splash droplets, ripples, and wet-wall trails;
-  - `Woodland`: a natural-history woodland diorama with realistic animals and a hollow oak log whose window shows participant A's walnuts and participant B's acorns;
+  - `Woodland`: a bright kawaii storybook clearing with chibi woodland animals and a heart-latched savings stump whose window shows participant A's smiling walnuts and participant B's smiling acorns;
   - `Mempool`: a period mining environment with a riveted iron ore cart, animated mempool blocks, pickaxe actions, and a local male/female miner appearance preference;
 - scene selection is available only during onboarding and in Settings;
 - automatic or manual rendering quality (`LOW`, `MEDIUM`, `HIGH`) and reduced-motion mode;

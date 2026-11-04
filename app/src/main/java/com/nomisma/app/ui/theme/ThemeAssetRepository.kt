@@ -17,6 +17,8 @@ internal data class ThemeAssetPack(
     val pitcher: ImageBitmap? = null,
     val woodlandCharacters: Map<String, ImageBitmap> = emptyMap(),
     val woodlandContainer: ImageBitmap? = null,
+    val woodlandAcorn: ImageBitmap? = null,
+    val woodlandWalnut: ImageBitmap? = null,
     val minerLeft: ImageBitmap? = null,
     val minerRight: ImageBitmap? = null,
     val mineCart: ImageBitmap? = null
@@ -45,12 +47,21 @@ private object ThemeAssetRepository {
                         root + manifest.getString("container"),
                         sampleSize.coerceAtMost(2)
                     ),
+                    woodlandAcorn = context.decodeAsset(
+                        root + manifest.getString("collectibleDirectory") + "/" + manifest.getString("acorn"),
+                        sampleSize.coerceAtMost(2)
+                    ),
+                    woodlandWalnut = context.decodeAsset(
+                        root + manifest.getString("collectibleDirectory") + "/" + manifest.getString("walnut"),
+                        sampleSize.coerceAtMost(2)
+                    ),
                     woodlandCharacters = manifest.getJSONArray("characters").let { characters ->
                         val directory = manifest.getString("characterDirectory")
+                        val extension = manifest.optString("characterExtension", "png")
                         (0 until characters.length()).associate { index ->
                             val identity = characters.getString(index)
                             identity to context.decodeAsset(
-                                "$root$directory/$identity.png",
+                                "$root$directory/$identity.$extension",
                                 sampleSize.coerceAtMost(2)
                             )
                         }

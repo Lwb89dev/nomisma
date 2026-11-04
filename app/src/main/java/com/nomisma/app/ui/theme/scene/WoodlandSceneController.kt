@@ -214,8 +214,9 @@ internal class WoodlandSceneController : SceneController {
                 render.x = token.body.position.x
                 render.y = token.body.position.y
                 val flight = (token.ageSeconds / TOKEN_FLIGHT_SECONDS).coerceIn(0f, 1f)
-                render.scale = 0.92f + sin(flight * PI.toFloat()) * 0.40f
+                render.scale = 0.80f + sin(flight * PI.toFloat()) * 0.34f
                 render.rotation = token.body.rotation
+                render.squash = sin(flight * PI.toFloat() * 4f) * 0.09f * (1f - flight * 0.55f)
             }
         }
         scope.drawWoodlandScene(state, displayFill, frame)
@@ -413,9 +414,10 @@ internal class WoodlandSceneController : SceneController {
         val height = viewportHeight
         val originX = if (fromLeft) width * 0.20f else width * 0.80f
         val originY = height * 0.48f + index * 0.0075f * height
-        // Front window of the log (chest at y 0.45, height 0.34, opening centered near 0.51).
+        // Front window of the kawaii stump (chest at y 0.45, height 0.32,
+        // opening centered around 0.63 of the container height).
         val targetX = width * 0.50f
-        val targetY = height * (0.45f + 0.34f * 0.51f)
+        val targetY = height * (0.45f + 0.32f * 0.63f)
         val gravity = TOKEN_GRAVITY_HEIGHTS * height
         val flight = TOKEN_FLIGHT_SECONDS
         token.body.position = Vec2(originX, originY)
@@ -426,7 +428,7 @@ internal class WoodlandSceneController : SceneController {
         token.body.gravity = gravity
         token.body.radius = 0.0125f * height
         token.body.rotation = 0f
-        token.body.angularVelocity = (270f + index * 45f) * (if (fromLeft) 1f else -1f) / flight
+        token.body.angularVelocity = (190f + index * 34f) * (if (fromLeft) 1f else -1f) / flight
         token.body.wake()
         token.floorY = targetY
         token.isWalnut = fromLeft

@@ -1,14 +1,19 @@
 {
   "id": "woodland",
-  "version": 1,
+  "version": 2,
   "background": "background.webp",
   "container": "container_log.webp",
   "characterDirectory": "characters",
+  "characterExtension": "webp",
   "characters": ["bear", "squirrel", "fox", "rabbit", "raccoon", "hedgehog", "owl", "otter"],
+  "collectibleDirectory": "collectibles",
+  "acorn": "acorn.webp",
+  "walnut": "walnut.webp",
   "layers": [
     { "id": "background", "role": "environment", "required": true },
     { "id": "characters", "role": "participant_identity", "required": true },
     { "id": "cache", "role": "runtime_interactive", "file": "container_log.webp", "required": true },
+    { "id": "collectibles", "role": "runtime_interactive", "required": true },
     { "id": "particles", "role": "runtime_procedural", "required": false }
   ],
   "safeArea": { "left": 0.05, "top": 0.08, "right": 0.95, "bottom": 0.88 }
