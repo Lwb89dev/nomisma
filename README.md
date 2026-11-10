@@ -2,7 +2,7 @@
 
 Nomisma is an Android app for splitting and synchronizing expenses in a shared ledger. It is **local-first**: the ledger is stored on the device in SQLite, while operations can be published and received over Nostr using Amber as an external signer.
 
-Current application version: `0.1.5`. See [CHANGELOG.md](CHANGELOG.md).
+Current application version: `0.1.6`. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Current status
 
@@ -47,7 +47,7 @@ Supported relay URLs are:
 
 Cleartext `ws://` traffic is disabled for other hosts. Even when the relay uses cleartext WebSockets, operation contents remain encrypted at the Nostr layer.
 
-The onboarding offers `wss://relay.damus.io`, `wss://nos.lol`, and `wss://relay.primal.net` as curated public starting points. Nomisma currently uses one primary relay per paired session; a custom relay remains configurable in Settings.
+The onboarding offers `wss://relay.ditto.pub` (default), `wss://relay.snort.social`, and `wss://nostr.oxtr.dev` as curated public starting points: each one accepts and delivers gift wraps signed by one-time keys. Nomisma currently uses one primary relay per paired session; a custom relay remains configurable in Settings.
 
 A pairing code contains only the ledger identifier, relay URL, public key, and participant mapping. It contains no expenses or private keys and includes an integrity checksum.
 

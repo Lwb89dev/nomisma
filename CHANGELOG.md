@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.6 — 2026-11-10
+
+New default relay, after nos.lol stopped accepting gift wraps.
+
+### Changed
+
+- The default relay is now wss://relay.ditto.pub, and the presets are Ditto, relay.snort.social and nostr.oxtr.dev. Each was checked to accept 32 KB gift wraps signed by one-time keys, acknowledge them within the publish timeout, and deliver them to their recipient.
+- Removed presets: nos.lol and nostr.mom never acknowledge gift wraps (the 0.1.5 known issue); relay.primal.net acknowledges after 9–23 s, beyond the 10 s timeout; offchain.pub rejects events larger than a few KB from keys outside its web of trust.
+- A relay already saved in Settings is kept. Pairings on nos.lol need the relay changed on both devices (Settings → Disconnect → relay URL → Connect); every operation is published again to the new relay.
+
 ## 0.1.5 — 2026-11-10
 
 Sync no longer gets stuck in "recupero storico", and a relay that stops acknowledging is handled.

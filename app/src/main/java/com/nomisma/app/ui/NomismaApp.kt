@@ -153,19 +153,22 @@ internal val Panel = Color(0xFF151923)
 internal val PanelLight = Color(0xFF202634)
 internal val Ink = Color(0xFFF4F6FA)
 internal val Muted = Color(0xFF9BA5B7)
-private const val DEFAULT_RELAY_URL = "wss://nos.lol"
+private const val DEFAULT_RELAY_URL = "wss://relay.ditto.pub"
 private const val LIGHTNING_ADDRESS = "lwb89@blink.sv"
 private const val APP_PREFERENCES = "nomisma_app"
 private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete_v1"
 
 private data class RelayPreset(val name: String, val url: String, val detail: String)
 
-// Every preset must hand gift wraps (kind 1059) to their recipient: relay.damus.io stopped doing
-// so (it demands NIP-42 auth and then rejects it), and relay.primal.net does not return them by #p.
+// Every preset must accept gift wraps (kind 1059) signed by one-time keys, acknowledge them
+// within the 10 s publish timeout, and hand them to their recipient by #p. Checked 2026-11-10
+// with 32 KB wraps. Dropped: nos.lol and nostr.mom (never acknowledge gift wraps),
+// relay.primal.net (acknowledges after 9–23 s), offchain.pub (web-of-trust size limit for
+// unknown keys), relay.damus.io (demands NIP-42 auth and then rejects it).
 private val RELAY_PRESETS = listOf(
-    RelayPreset("nos.lol", "wss://nos.lol", "Relay pubblico con filtri antispam e ampia adozione."),
     RelayPreset("Ditto", "wss://relay.ditto.pub", "Relay pubblico che consegna i messaggi cifrati al destinatario."),
-    RelayPreset("nostr.mom", "wss://nostr.mom", "Relay pubblico generalista, compatibile con i messaggi cifrati.")
+    RelayPreset("Snort", "wss://relay.snort.social", "Relay pubblico generalista, compatibile con i messaggi cifrati."),
+    RelayPreset("oxtr", "wss://nostr.oxtr.dev", "Relay pubblico generalista, compatibile con i messaggi cifrati.")
 )
 
 @Composable
