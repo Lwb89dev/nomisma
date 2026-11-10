@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.5 — 2026-11-10
+
+Sync no longer gets stuck in "recupero storico", and a relay that stops acknowledging is handled.
+
+### Fixed
+
+- The end of the relay backlog (EOSE) could be lost. Inbound messages went through a 64-slot buffer that silently dropped messages when the collector, slowed by one Amber decryption per gift wrap, fell behind, so the session never left "recupero storico" and never published the outbox. The buffer no longer drops anything.
+- A relay that accepts the connection but never acknowledges events (nos.lol currently does this for gift wraps) made every publish wait 10 s per operation. The first timeout now ends the round and reconnects, with growing delays (15 s up to 5 minutes) instead of reconnecting every few seconds. A 30 s WebSocket ping also detects dead connections.
+- Gift wraps from other apps are dropped by sender before any other check, so they no longer show up as rejected operations.
+
+### Added
+
+- Sync trace on logcat (`adb logcat -s NomismaSync`): event kinds, shortened ids, outcomes and timings only, never contents, amounts or full keys.
+
+### Known issue
+
+- If a relay silently ignores gift wraps, operations stay in the outbox until the relay is changed on both devices (Settings). wss://relay.primal.net accepted them in tests.
+
 ## 0.1.4 — 2026-10-31
 
 Android alerts when the other participant adds an expense.

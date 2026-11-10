@@ -5,7 +5,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// Release signing material lives in keystore/, which is gitignored.
+// Release signing: keystore/keystore.properties is gitignored.
+// storeFile is an absolute path, or a file name inside keystore/.
 val keystoreProperties = Properties().apply {
     val file = rootProject.file("keystore/keystore.properties")
     if (file.isFile) file.inputStream().use(::load)
@@ -19,7 +20,8 @@ android {
         create("release") {
             val storeName = keystoreProperties.getProperty("storeFile")
             if (!storeName.isNullOrBlank()) {
-                storeFile = rootProject.file("keystore/$storeName")
+                val resolved = if (storeName.startsWith("/")) storeName else "keystore/$storeName"
+                storeFile = rootProject.file(resolved)
             }
             storePassword = keystoreProperties.getProperty("storePassword")
             keyAlias = keystoreProperties.getProperty("keyAlias")
@@ -31,8 +33,8 @@ android {
         applicationId = "com.nomisma.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 6
+        versionName = "0.1.5"
     }
 
     buildFeatures {

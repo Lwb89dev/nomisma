@@ -2,7 +2,7 @@
 
 Nomisma is an Android app for splitting and synchronizing expenses in a shared ledger. It is **local-first**: the ledger is stored on the device in SQLite, while operations can be published and received over Nostr using Amber as an external signer.
 
-Current application version: `0.1.4`. See [CHANGELOG.md](CHANGELOG.md).
+Current application version: `0.1.5`. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Current status
 
@@ -84,7 +84,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
-`assembleRelease` signs the APK with `keystore/nomisma-release.jks`. The keystore and `keystore/keystore.properties` are gitignored. Without them the release build stops. A release-signed APK does not install over a build signed with the debug key.
+`assembleRelease` signs the APK with the keystore named by `storeFile` in `keystore/keystore.properties`. That file is gitignored and currently points at `keystores/nomisma/nomisma.release.jks` next to this repository. Without the properties file or the keystore, the release build stops. A release-signed APK does not install over a build signed with the debug key.
 
 ## First launch
 

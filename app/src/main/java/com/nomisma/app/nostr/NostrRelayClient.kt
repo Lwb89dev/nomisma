@@ -58,9 +58,17 @@ class NostrRelayClient(
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
+        // Without pings a connection dropped by the network stays "open" forever: nothing
+        // arrives, publishes time out, and no reconnect ever starts.
+        .pingInterval(30, TimeUnit.SECONDS)
         .build()
 ) {
-    private val _messages = MutableSharedFlow<RelayMessage>(extraBufferCapacity = 64)
+    /**
+     * Unbounded on purpose: each inbound gift wrap is decrypted through Amber, so the collector
+     * is slower than the relay during the backlog. A bounded buffer made tryEmit drop events and
+     * the EOSE, which left the session stuck in "recupero storico" and never published.
+     */
+    private val _messages = MutableSharedFlow<RelayMessage>(extraBufferCapacity = Int.MAX_VALUE)
     val messages: SharedFlow<RelayMessage> = _messages.asSharedFlow()
     private val _connectionState = MutableStateFlow(RelayConnectionState.DISCONNECTED)
     val connectionState: StateFlow<RelayConnectionState> = _connectionState.asStateFlow()
@@ -79,6 +87,7 @@ class NostrRelayClient(
         val request = Request.Builder().url(relayUrl).build()
         socket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                SyncLog.d("socket open")
                 _connectionState.value = RelayConnectionState.CONNECTED
                 _messages.tryEmit(RelayMessage.Connected)
             }
@@ -92,11 +101,13 @@ class NostrRelayClient(
                     if (message is RelayMessage.Ack) {
                         pendingAcks.remove(message.eventId)?.complete(message)
                     }
-                    _messages.tryEmit(message)
+                    trace(message)
+                    if (!_messages.tryEmit(message)) SyncLog.w("dropped ${message.javaClass.simpleName}")
                 }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                SyncLog.w("socket failure", t)
                 socket = null
                 _connectionState.value = RelayConnectionState.DISCONNECTED
                 failPendingAcks(t)
@@ -104,6 +115,7 @@ class NostrRelayClient(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                SyncLog.d("socket closed $code $reason")
                 socket = null
                 _connectionState.value = RelayConnectionState.DISCONNECTED
                 failPendingAcks(IllegalStateException("Relay closed: $reason"))
@@ -120,6 +132,7 @@ class NostrRelayClient(
     }
 
     fun subscribe(subscriptionId: String = UUID.randomUUID().toString(), filter: RelayFilter): String {
+        SyncLog.d("-> REQ kinds=${filter.kinds} since=${filter.since} limit=${filter.limit}")
         send(JSONArray().put("REQ").put(subscriptionId).put(filter.toJson()).toString())
         return subscriptionId
     }
@@ -147,6 +160,7 @@ class NostrRelayClient(
             "An acknowledgement is already pending for ${event.id}"
         }
         try {
+            SyncLog.d("-> $verb kind=${event.kind} id=${SyncLog.shortId(event.id)}")
             send(JSONArray().put(verb).put(JSONObject(event.toJson())).toString())
             val acknowledgement = withTimeout(timeoutMillis) { deferred.await() }
             check(acknowledgement.accepted) {
@@ -168,6 +182,19 @@ class NostrRelayClient(
     private fun send(message: String) {
         check(socket != null) { "Relay is not connected" }
         check(socket?.send(message) == true) { "Relay rejected outgoing message" }
+    }
+
+    private fun trace(message: RelayMessage) {
+        when (message) {
+            is RelayMessage.Event -> SyncLog.d("<- EVENT kind=${message.event.kind} id=${SyncLog.shortId(message.event.id)}")
+            is RelayMessage.Ack -> SyncLog.d("<- OK id=${SyncLog.shortId(message.eventId)} accepted=${message.accepted} ${message.message}")
+            is RelayMessage.EndOfStoredEvents -> SyncLog.d("<- EOSE")
+            is RelayMessage.Notice -> SyncLog.d("<- NOTICE ${message.message}")
+            is RelayMessage.AuthChallenge -> SyncLog.d("<- AUTH")
+            is RelayMessage.SubscriptionClosed -> SyncLog.d("<- CLOSED ${message.message}")
+            is RelayMessage.ProtocolError -> SyncLog.w("<- protocol error ${message.message}")
+            else -> Unit
+        }
     }
 
     private fun failPendingAcks(cause: Throwable) {

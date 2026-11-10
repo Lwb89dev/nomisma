@@ -180,7 +180,11 @@ class AmberSigner(
         arguments: Array<String>,
         columns: List<String>
     ): Map<String, String>? {
-        val packageName = signerIdentity.packageName.takeIf(String::isNotBlank) ?: return null
+        val packageName = signerIdentity.packageName.takeIf(String::isNotBlank) ?: run {
+            SyncLog.w("amber $action: no package name, provider skipped")
+            return null
+        }
+        val startedAt = System.currentTimeMillis()
         return withContext(Dispatchers.IO) {
             runCatching {
                 activity.contentResolver
@@ -193,7 +197,9 @@ class AmberSigner(
                                 ?.let { column to it }
                         }.toMap().takeIf { it.isNotEmpty() }
                     }
-            }.getOrNull()
+            }.onFailure { SyncLog.w("amber $action provider error", it) }
+                .getOrNull()
+                .also { SyncLog.d("amber $action provider ${if (it == null) "declined" else "ok"} in ${System.currentTimeMillis() - startedAt}ms") }
         }
     }
 
@@ -204,6 +210,7 @@ class AmberSigner(
         otherPubkey: String? = null,
         currentUser: String? = null
     ): ActivityResult = screenRequests.withLock {
+        SyncLog.d("amber $type: opening Amber screen")
         suspendCancellableCoroutine { continuation ->
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:${Uri.encode(payload)}")).apply {
                 packageName?.takeIf(String::isNotBlank)?.let { `package` = it }

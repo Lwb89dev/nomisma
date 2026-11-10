@@ -112,6 +112,7 @@ class NostrSessionController(
     private var checkRetries = 0
     private var publishRetries = 0
     private var publishRetryJob: Job? = null
+    private var unresponsiveStreak = 0
     private var configuredSession: SyncConfiguration? = null
     private var intentionalDisconnect = true
 
@@ -163,6 +164,7 @@ class NostrSessionController(
 
         intentionalDisconnect = false
         configuredSession = normalized
+        unresponsiveStreak = 0
         reconnectJob?.cancel()
         reconnectJob = null
         sessionJob?.cancel()
@@ -224,7 +226,11 @@ class NostrSessionController(
     fun onLocalChange() = requestPublish()
 
     private fun requestPublish() {
-        if (!_state.value.isConnected || activeRelay == null || configuredSession == null || signer == null) return
+        if (!_state.value.isConnected || activeRelay == null || configuredSession == null || signer == null) {
+            SyncLog.d("publish skipped: connected=${_state.value.isConnected} relay=${activeRelay != null}")
+            return
+        }
+        SyncLog.d("publish requested (running=${publishingJob?.isActive == true})")
         if (publishingJob?.isActive == true) {
             publishAgain = true
             return
@@ -268,6 +274,8 @@ class NostrSessionController(
                 publisher = NostrOperationPublisher(activeSigner, relay, configuration.localParticipantId),
                 inboundProcessor = inboundProcessor(activeSigner, configuration)
             ).publishPending(configuration.recipientPubkey)
+            SyncLog.d("outbox published ${report.published}/${report.attempted}")
+            report.failures.forEach { SyncLog.w("publish failed $it") }
             if (report.attempted > 0) {
                 update {
                     it.copy(
@@ -276,9 +284,22 @@ class NostrSessionController(
                     )
                 }
             }
+            if (report.published > 0) unresponsiveStreak = 0
+            if (report.relayUnresponsive) {
+                // A fresh connection replays the backlog and publishes again after its EOSE. The EOSE
+                // resets the ordinary backoff, so a relay that keeps ignoring EVENTs gets its own,
+                // slower one instead of a reconnect every few seconds.
+                unresponsiveStreak = (unresponsiveStreak + 1).coerceAtMost(MAX_UNRESPONSIVE_STREAK)
+                handleConnectionLoss(
+                    "Il relay non conferma le pubblicazioni",
+                    minDelayMillis = (UNRESPONSIVE_BASE_DELAY_MILLIS shl (unresponsiveStreak - 1))
+                        .coerceAtMost(UNRESPONSIVE_MAX_DELAY_MILLIS)
+                )
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
+            SyncLog.w("publish outbox failed", failure)
             update { it.copy(error = failure.message ?: "Sincronizzazione non riuscita") }
         }
     }
@@ -529,7 +550,12 @@ class NostrSessionController(
 
     /** Returns true when the materialized ledger changed during backlog replay. */
     private suspend fun processInbound(processor: NostrInboundProcessor, event: NostrEvent): Boolean {
+        val startedAt = System.currentTimeMillis()
         val result = processor.process(event)
+        SyncLog.d(
+            "inbound ${SyncLog.shortId(event.id)} -> ${result.status} in ${System.currentTimeMillis() - startedAt}ms" +
+                (result.message?.takeIf { result.status == InboundProcessingStatus.REJECTED }?.let { " ($it)" } ?: "")
+        )
         var backlogChanged = false
         when (result.status) {
             // Checkpoints replayed from the relay's history describe states that are gone.
@@ -572,10 +598,11 @@ class NostrSessionController(
         return NostrInboundProcessor(activeSigner, repository, expectedAuthors)
     }
 
-    private fun handleConnectionLoss(reason: String) {
+    private fun handleConnectionLoss(reason: String, minDelayMillis: Long = 0L) {
         if (intentionalDisconnect || configuredSession == null) return
         val attempt = (_state.value.reconnectAttempt + 1).coerceAtMost(1_000)
-        val retryDelayMillis = RelayReconnectPolicy.delayMillis(attempt)
+        val retryDelayMillis = RelayReconnectPolicy.delayMillis(attempt).coerceAtLeast(minDelayMillis)
+        SyncLog.w("connection lost: $reason · retry in ${retryDelayMillis / 1_000}s")
         update {
             it.copy(
                 status = SyncConnectionStatus.BACKOFF,
@@ -605,6 +632,9 @@ class NostrSessionController(
         const val CHECK_DEBOUNCE_MILLIS = 2_500L
         const val MIN_RETRY_MILLIS = 5_000L
         const val MAX_CHECK_RETRIES = 6
+        const val UNRESPONSIVE_BASE_DELAY_MILLIS = 15_000L
+        const val UNRESPONSIVE_MAX_DELAY_MILLIS = 5 * 60 * 1_000L
+        const val MAX_UNRESPONSIVE_STREAK = 6
         /** Checkpoints are live-only; an old one describes a state that no longer exists. */
         const val MAX_CHECKPOINT_AGE_MILLIS = 10 * 60 * 1_000L
     }

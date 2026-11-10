@@ -110,14 +110,14 @@ class NostrOperationUnwrapper(
         }
 
         val seal = NostrEvent.fromJson(signer.nip44Decrypt(event.content, event.pubkey))
-        require(seal.kind == NostrKinds.SEAL) { "Gift wrap does not contain a seal" }
-        require(seal.tags.isEmpty()) { "NIP-59 seals must not contain tags" }
-        NostrEventValidator.validate(seal).getOrThrow()
         // The same inbox carries the user's private messages from other apps. The seal names the
-        // sender, so anything not from this pairing is dropped before its content is decrypted.
+        // sender, so anything not from this pairing is dropped before it is judged or decrypted.
         if (expectedAuthorByPubkey.isNotEmpty() && seal.pubkey !in expectedAuthorByPubkey) {
             throw ForeignEventException("Gift wrap from a key outside this pairing")
         }
+        require(seal.kind == NostrKinds.SEAL) { "Gift wrap does not contain a seal" }
+        require(seal.tags.isEmpty()) { "NIP-59 seals must not contain tags" }
+        NostrEventValidator.validate(seal).getOrThrow()
 
         val rumor = UnsignedNostrEvent.fromJson(signer.nip44Decrypt(seal.content, seal.pubkey))
         require(rumor.pubkey == seal.pubkey) { "Rumor author does not match seal signer" }
